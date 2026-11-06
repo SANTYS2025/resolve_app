@@ -1,0 +1,157 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
+@import 'tailwindcss';
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --font-sans: 'Outfit', sans-serif;
+  --font-serif: 'Fraunces', serif;
+  --font-mono: 'DM Mono', monospace;
+}
+
+:root {
+  --background: #F4F8F4;
+  --foreground: #000032;
+  --card: #FFFFFF;
+  --card-foreground: #000032;
+  --primary: #2EDF2D;
+  --primary-foreground: #000032;
+  --secondary: #DDFBDD;
+  --secondary-foreground: #000032;
+  --muted: #D6EDD9;
+  --muted-foreground: #566A5B;
+  --accent: #000032;
+  --accent-foreground: #FFFFFF;
+  --border: #D3E2D4;
+  --ring: #2EDF2D;
+  --radius: 8px;
+
+  /* Navy palette for dark sections */
+  --navy: #000032;
+  --navy-mid: #0A0A55;
+  --navy-light: #14146B;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+*:hover {
+  scrollbar-color: var(--border) transparent;
+}
+
+html {
+  font-family: 'Outfit', sans-serif;
+  background-color: var(--navy); /* evita el destello blanco al hacer overscroll */
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+
+@keyframes badge-in {
+  from { opacity: 0; transform: scale(0.8) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.float-card { animation: float 4s ease-in-out infinite; }
+.badge-in   { animation: badge-in 0.4s cubic-bezier(0.34,1.56,0.64,1) forwards; }
+.slide-up   { animation: slide-up 0.5s ease forwards; }
+
+.hero-gradient {
+  background: linear-gradient(135deg, #0A1628 0%, #0D1F3C 50%, #0F2644 100%);
+}
+
+.cat-hover {
+  transition: all 0.2s cubic-bezier(0.34, 1.2, 0.64, 1);
+}
+.cat-hover:hover {
+  transform: translateY(-3px) scale(1.02);
+}
+
+.worker-card {
+  transition: all 0.25s cubic-bezier(0.34, 1.2, 0.64, 1);
+}
+.worker-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 40px rgba(26, 201, 56, 0.10), 0 4px 16px rgba(10, 22, 40, 0.08);
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #22DC44 0%, #1AC938 100%);
+  color: #0A1628;
+  box-shadow: 0 4px 14px rgba(26, 201, 56, 0.35);
+  transition: all 0.2s ease;
+}
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(26, 201, 56, 0.50);
+}
+.btn-primary:active {
+  transform: translateY(0);
+}
+
+/* ── Ajustes para móvil ───────────────────────────────────────── */
+html, body { overscroll-behavior: none; }
+button, a, input, textarea, select { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+button { cursor: pointer; transition: transform .12s ease, opacity .15s ease; }
+button:active:not(:disabled) { transform: scale(0.97); }
+:focus-visible { outline: 2px solid #2EDF2D; outline-offset: 2px; }
+
+/* Texto de guía de los formularios: gris medio + cursiva para distinguirlo de un valor real.
+   (Antes heredaba el gris claro de Tailwind y algunos campos parecían ya llenos.) */
+input::placeholder,
+textarea::placeholder {
+  color: #6B7280;
+  opacity: 1;
+  font-style: italic;
+}
+
+/* ── Tiempo real ──────────────────────────────────────────────── */
+@keyframes toast-in { from { opacity: 0; transform: translateY(-16px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes flash-in { 0% { background-color: #DDFBDD; transform: translateY(-6px); opacity: .4; } 100% { background-color: #fff; transform: none; opacity: 1; } }
+@keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+.toast-in { animation: toast-in .35s cubic-bezier(.34,1.3,.64,1) both; }
+.flash-in { animation: flash-in 1.6s ease-out both; }
+
+/* Respeta "reducir movimiento" del sistema */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+
+/* Espacio inferior que respeta la barra de gestos / home indicator */
+.pb-safe { padding-bottom: max(20px, calc(env(safe-area-inset-bottom) + 8px)); }
+
+/* Logo de carga: latido suave (se desactiva con "reducir movimiento") */
+@keyframes logo-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .7; transform: scale(0.97); } }
+.logo-pulse { animation: logo-pulse 1.6s ease-in-out infinite; }
+
+/* Entrada del splash: solo opacidad y un desplazamiento corto (no retrasa la carga) */
+@keyframes splash-in { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
+.splash-in { animation: splash-in .38s cubic-bezier(.22,.8,.3,1) both; }
+
+/* Diálogo "¿Recibiste el pago?" */
+@keyframes dialog-in { from { opacity: 0; transform: translateY(18px) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes dialog-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+.dialog-in { animation: dialog-in .22s cubic-bezier(.22,.8,.3,1) both; }
+.dialog-backdrop-in { animation: dialog-backdrop-in .2s ease both; }

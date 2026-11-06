@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Colores de marca. `styles.xml` ya los referenciaba, pero el archivo no existía. -->
+    <color name="colorPrimary">#000032</color>
+    <color name="colorPrimaryDark">#000032</color>
+    <color name="colorAccent">#2EDF2D</color>
+    <!-- Fondo del splash nativo (Android 12+ y compatibilidad) -->
+    <color name="splashBackground">#000032</color>
+</resources>
