@@ -117,10 +117,10 @@ test('pago interno: monto, comisión y neto con la misma regla del servidor', ()
   assert.equal(calcularPagoInterno({ precioFinal: 10_000, descuentoCentavos: 9_999_999 }).montoCentavos, 0)
 })
 
-test('solo los métodos manuales se confirman sin proveedor real', () => {
-  assert.deepEqual([...METODOS_PAGO_INTERNO], ['efectivo', 'nequi', 'bancolombia', 'bre_b'])
+test('solo los métodos manuales habilitados se confirman sin proveedor real', () => {
+  assert.deepEqual([...METODOS_PAGO_INTERNO], ['nequi', 'bancolombia', 'daviplata', 'efectivo'])
   for (const m of METODOS_PAGO_INTERNO) assert.equal(esMetodoPagoInterno(m), true, m)
-  for (const m of ['tarjeta_credito', 'tarjeta_debito', 'google_pay', '', null]) {
+  for (const m of ['tarjeta_credito', 'tarjeta_debito', 'google_pay', 'bre_b', '', null]) {
     assert.equal(esMetodoPagoInterno(m), false, String(m))
   }
 })

@@ -8,9 +8,11 @@ import logo from './imports/logo.png'
 // Fotos por defecto según género (recortadas de la guía de perfil de la marca)
 import avatarHombre from './imports/avatar-hombre.png'
 import avatarMujer from './imports/avatar-mujer.png'
+import { IconoMaterial } from './components/IconoMaterial'
+import { MetodoPagoLogo } from './components/MetodoPagoLogo'
 import { supabase } from './lib/supabase'
 import {
-  calificarSolicitud, cambiarEstado, completarSolicitud, confirmarTecnico, crearSolicitud, ensurePerfil, enviarMensaje, errMsg, fmt, getBarrios, getCategorias, getEstadoSolicitud,
+  aceptarSolicitud, calificarSolicitud, cambiarEstado, completarSolicitud, confirmarTecnico, crearSolicitud, ensurePerfil, enviarMensaje, errMsg, fmt, getBarrios, getCategorias, getEstadoSolicitud,
   getHistorial, getDisponibilidades, getEstadoAprobacion, getMiCuentaBancaria, getMiTecnicoId, getMiVerificacion, getPedidos, getTecnicos,
   esCorreo, guardarCuentaBancaria, guardarDiagnostico, guardarGenero, iniciarDesplazamiento, marcarLlegada, normCel, registrarMetodoPago, registrarTecnico,
   soloDigitos, soloDireccion, soloNombre, urlGoogleMaps, useData,
@@ -18,20 +20,22 @@ import {
 import type { Barrio, Categoria, CuentaBancaria, Disponibilidad, Genero, Pedido, Perfil, Rol, SolicitudEvento, WorkerType } from './lib/api'
 import { evaluarAccesoChat, mostrarBotonChat, validarMensaje, MAX_MENSAJE } from './lib/chat'
 import {
-  METODOS, etiquetaEstadoPago, metodoDiferido, metodoPagoInfo, puedeElegirMetodoPago,
+  METODOS, etiquetaEstadoPago, metodoDiferido, metodoHabilitado, metodoPagoInfo, puedeElegirMetodoPago,
   resumenPagoTecnico, validarSeleccionMetodo,
 } from './lib/pagos'
 import type { MetodoPago } from './lib/pagos'
 import {
-  accionDelTecnico, clientePuedeCancelar, disponibilidadTecnico, esperaConfirmacionCliente,
-  filtrarSolicitudes, llegadaRegistrada, puedeAceptarSolicitud, puedeFinalizarSolicitud, progresoCliente,
+  ESTADOS_ACTIVOS_TECNICO, accionDelTecnico, clientePuedeCancelar, disponibilidadTecnico,
+  esEnEspera, esperaConfirmacionCliente, filtrarSolicitudes, llegadaRegistrada, ordenarEnEspera,
+  puedeAceptarSolicitud, puedeFinalizarSolicitud, progresoCliente,
 } from './lib/solicitudes'
 import { recomendarTecnicos } from './lib/recomendacion'
 import { useMensajesEnVivo, useSolicitudesEnVivo } from './lib/realtime'
 import { registrarPagoInterno } from './lib/transacciones'
 import { registrarPush } from './lib/push'
 import { ARRANQUE_FRIO, cerrarSesion, limpiarSesionDeArranque } from './lib/sesion'
-import { esEnlaceRecuperacion, mensajeErrorRecuperacion, validarCorreoRecuperacion } from './lib/auth'
+import { esEnlaceRecuperacion, mensajeErrorRecuperacion, validarCorreoRecuperacion, validarNuevaPassword } from './lib/auth'
+import { geocodificarInversa, mensajeUbicacion, obtenerUbicacionActual } from './lib/geocodificacion'
 import {
   AgendaScreen, CuponBox, EarningsScreen, FavoriteButton, HelpScreen, NotificationsScreen,
   PortfolioScreen, RastreoUbicacion, ReferralsScreen, ReportarProblemaBox, ResetPasswordScreen,
@@ -60,6 +64,8 @@ const ESTADO: Record<string, { label: string; bg: string; color: string }> = {
   en_camino: { label: 'En camino', bg: '#E0E7FF', color: '#3730A3' },
   en_proceso: { label: 'En proceso', bg: '#E0E7FF', color: '#3730A3' },
   llego: { label: 'Técnico llegó', bg: '#DCFCE7', color: '#166534' },
+  en_espera: { label: 'En espera', bg: '#FEF3C7', color: '#92400E' },
+  confirmada_en_espera: { label: 'Confirmada · en espera', bg: '#FEF3C7', color: '#92400E' },
   completada: { label: 'Terminada', bg: GL, color: '#065F46' },
   rechazada: { label: 'Rechazada', bg: '#FEE2E2', color: '#991B1B' },
   cancelada: { label: 'Cancelada', bg: '#F3F4F6', color: '#4B5563' },
@@ -73,6 +79,8 @@ const ESTADO_TEC: Record<string, string> = {
   en_camino: 'En camino',
   en_proceso: 'En proceso',
   llego: 'En el domicilio',
+  en_espera: 'En espera · turno pendiente',
+  confirmada_en_espera: 'Confirmada · en espera',
   completada: 'Terminada',
 }
 const todayLocal = () => new Date().toLocaleDateString('en-CA')
@@ -341,7 +349,9 @@ function SplashScreen({ openAuth }: { openAuth: (t: AuthTab) => void }) {
 function AuthScreen({ initialTab, go, onAuth }: { initialTab: AuthTab; go: NavFn; onAuth: (p: Perfil) => Promise<void> }) {
   const [tab, setTab] = useState<AuthTab>(initialTab)
   const [role, setRole] = useState<'client' | 'worker' | null>(null)
-  const [form, setForm] = useState({ name: '', email: '', password: '' })
+  const [form, setForm] = useState({ name: '', email: '', password: '', password2: '' })
+  const [verPassword, setVerPassword] = useState(false)
+  const [verPassword2, setVerPassword2] = useState(false)
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [notice, setNotice] = useState('')
@@ -378,7 +388,8 @@ function AuthScreen({ initialTab, go, onAuth }: { initialTab: AuthTab; go: NavFn
     if (tab === 'register') {
       if (name.length < 3) return setMessage('Ingresa tu nombre completo.')
       if (!role) return setMessage('Selecciona si buscas un técnico o si eres trabajador.')
-      if (form.password.length < 8) return setMessage('La contraseña debe tener mínimo 8 caracteres.')
+      const errPass = validarNuevaPassword(form.password, form.password2)
+      if (errPass) return setMessage(errPass)
     }
 
     setLoading(true)
@@ -433,11 +444,35 @@ function AuthScreen({ initialTab, go, onAuth }: { initialTab: AuthTab; go: NavFn
             placeholder="tu@correo.com" className={INPUT} style={INPUT_STYLE} />
         </Field>
         <Field label="Contraseña">
-          <input type="password" maxLength={72} autoComplete={tab === 'login' ? 'current-password' : 'new-password'} value={form.password}
-            onChange={e => setForm({ ...form, password: e.target.value })}
-            onKeyDown={e => { if (e.key === 'Enter' && !loading) handleAuth() }}
-            placeholder="Mínimo 8 caracteres" className={INPUT} style={INPUT_STYLE} />
+          <div className="relative">
+            <input type={verPassword ? 'text' : 'password'} maxLength={72} autoComplete={tab === 'login' ? 'current-password' : 'new-password'} value={form.password}
+              onChange={e => setForm({ ...form, password: e.target.value })}
+              onKeyDown={e => { if (e.key === 'Enter' && !loading) handleAuth() }}
+              placeholder="Mínimo 8 caracteres" className={`${INPUT} pr-12`} style={INPUT_STYLE} />
+            <button type="button" onClick={() => setVerPassword(v => !v)} aria-label={verPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+              className="absolute right-1 top-1/2 -translate-y-1/2 w-11 h-11 rounded-xl flex items-center justify-center text-lg" style={{ color: MU }}>
+              <span aria-hidden="true">{verPassword ? '🙈' : '👁️'}</span>
+            </button>
+          </div>
         </Field>
+
+        {tab === 'register' && (
+          <Field label="Confirmar contraseña">
+            <div className="relative">
+              <input type={verPassword2 ? 'text' : 'password'} maxLength={72} autoComplete="new-password" value={form.password2}
+                onChange={e => setForm({ ...form, password2: e.target.value })}
+                onKeyDown={e => { if (e.key === 'Enter' && !loading) handleAuth() }}
+                placeholder="Repite tu contraseña" className={`${INPUT} pr-12`} style={INPUT_STYLE} />
+              <button type="button" onClick={() => setVerPassword2(v => !v)} aria-label={verPassword2 ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                className="absolute right-1 top-1/2 -translate-y-1/2 w-11 h-11 rounded-xl flex items-center justify-center text-lg" style={{ color: MU }}>
+                <span aria-hidden="true">{verPassword2 ? '🙈' : '👁️'}</span>
+              </button>
+            </div>
+            {form.password2.length > 0 && form.password !== form.password2 && (
+              <p className="text-xs mt-1 font-semibold" style={{ color: '#991B1B' }}>Las contraseñas no coinciden</p>
+            )}
+          </Field>
+        )}
 
         {tab === 'register' && (
           <Field label="Soy…">
@@ -482,13 +517,27 @@ function AuthScreen({ initialTab, go, onAuth }: { initialTab: AuthTab; go: NavFn
 }
 
 /* ═════════ Home ═════════ */
-function HomeScreen({ perfil, go, setWorker }: { perfil: Perfil; go: NavFn; setWorker: (w: WorkerType) => void }) {
-  const tecnicos = useData(getTecnicos, [], [] as WorkerType[])
+function HomeScreen({ perfil, go, setWorker, onSolicitar }: { perfil: Perfil; go: NavFn; setWorker: (w: WorkerType) => void; onSolicitar: (w: WorkerType) => void }) {
+  const live = useContext(LiveCtx)
+  // Se refresca con Realtime: si un técnico empieza o termina un servicio, su
+  // insignia DISPONIBLE/OCUPADO cambia sin recargar la pantalla.
+  const tecnicos = useData(getTecnicos, [live.version], [] as WorkerType[])
   const cats = useData(getCategorias, [], [] as Categoria[])
   const [filter, setFilter] = useState<number | null>(null)
   const [q, setQ] = useState('')
   const [soloDisponibles, setSoloDisponibles] = useState(false)
   const puedeSolicitar = perfil.rol === 'cliente'
+
+  /*
+   * La disponibilidad de otros técnicos no siempre llega por Realtime (las RLS
+   * ocultan solicitudes de otros clientes), así que además se refresca cada 30 s.
+   * Así la insignia OCUPADO/DISPONIBLE no queda con datos viejos al contratar.
+   */
+  useEffect(() => {
+    const id = window.setInterval(() => tecnicos.reload(), 30_000)
+    return () => window.clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const visible = useMemo(() => {
     const s = q.trim().toLowerCase()
@@ -586,7 +635,7 @@ function HomeScreen({ perfil, go, setWorker }: { perfil: Perfil; go: NavFn; setW
                         <span className="inline-flex items-center gap-1 mt-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full"
                           style={{ backgroundColor: w.disponibleAhora ? GL : '#F3F4F6', color: w.disponibleAhora ? '#065F46' : '#4B5563' }}>
                           <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: w.disponibleAhora ? G : '#9CA3AF' }} />
-                          {w.disponibleAhora ? 'Disponible ahora' : 'Ocupado'}
+                          {w.disponibleAhora ? 'DISPONIBLE' : 'OCUPADO'}
                         </span>
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0">
@@ -601,7 +650,12 @@ function HomeScreen({ perfil, go, setWorker }: { perfil: Perfil; go: NavFn; setW
                         : <span className="text-sm" style={{ color: MU }}>Sin reseñas aún</span>}
                     </div>
                     <div className="flex flex-wrap gap-x-2 mt-1 text-xs" style={{ color: MU }}>
-                      {w.neighborhood && <span>📍 {w.neighborhood}</span>}
+                      {w.neighborhood && (
+                        <span className="inline-flex items-center gap-1">
+                          <IconoMaterial name="location_on" size={12} />
+                          {w.neighborhood}
+                        </span>
+                      )}
                       <span>· {w.jobs} trabajos</span><span>· {w.years} años</span>
                     </div>
                   </div>
@@ -615,7 +669,7 @@ function HomeScreen({ perfil, go, setWorker }: { perfil: Perfil; go: NavFn; setW
                     <button onClick={() => { setWorker(w); go('worker') }} className="min-h-[44px] text-[13px] font-bold px-4 rounded-2xl border"
                       style={{ borderColor: BD, color: N, backgroundColor: W }}>Ver perfil</button>
                     {puedeSolicitar && (
-                      <button onClick={() => { setWorker(w); go('request') }} className="min-h-[44px] text-[13px] font-extrabold px-4 rounded-2xl"
+                      <button onClick={() => { setWorker(w); onSolicitar(w) }} className="min-h-[44px] text-[13px] font-extrabold px-4 rounded-2xl"
                         style={{ backgroundColor: G, color: N }}>Contactar</button>
                     )}
                   </div>
@@ -631,12 +685,12 @@ function HomeScreen({ perfil, go, setWorker }: { perfil: Perfil; go: NavFn; setW
 }
 
 /* ═════════ Perfil del técnico ═════════ */
-function WorkerScreen({ worker: w, perfil, go }: { worker: WorkerType; perfil: Perfil; go: NavFn }) {
+function WorkerScreen({ worker: w, perfil, go, onSolicitar }: { worker: WorkerType; perfil: Perfil; go: NavFn; onSolicitar: (w: WorkerType) => void }) {
   const disp = useData(() => getDisponibilidades(w.id), [w.id], [] as Disponibilidad[])
   const horario = disp.data.map(d => `${DIAS[d.dia_semana % 7]} ${d.hora_inicio.slice(0, 5)}–${d.hora_fin.slice(0, 5)}`).join(' · ')
   const rows: [string, string][] = [
     ['💰 Tarifa', `${fmt(w.priceMin)} – ${fmt(w.priceMax)} COP`],
-    ['📍 Barrio', w.neighborhood ? `${w.neighborhood}, Pasto` : 'No especificado'],
+    ['Barrio', w.neighborhood ? `${w.neighborhood}, Pasto` : 'No especificado'],
     ['📅 Horario', disp.loading ? 'Cargando…' : horario || 'A convenir'],
     ['🔒 Verificación', w.verified ? 'Identidad verificada' : 'En proceso de verificación'],
   ]
@@ -654,7 +708,16 @@ function WorkerScreen({ worker: w, perfil, go }: { worker: WorkerType; perfil: P
           <div className="flex items-start justify-between gap-3 mb-2">
             <div className="min-w-0">
               <h2 className="text-xl font-extrabold leading-tight" style={{ color: N }}>{w.name}</h2>
-              <p className="text-sm mt-0.5" style={{ color: MU }}>{w.trade}{w.neighborhood && ` · 📍 ${w.neighborhood}`}</p>
+              <p className="text-sm mt-0.5" style={{ color: MU }}>
+                {w.trade}
+                {w.neighborhood && (
+                  <span className="inline-flex items-center gap-1">
+                    <span>·</span>
+                    <IconoMaterial name="location_on" size={12} />
+                    {w.neighborhood}
+                  </span>
+                )}
+              </p>
             </div>
             <div className="flex items-center gap-1 flex-shrink-0">
               {perfil.rol === 'cliente' && <FavoriteButton tecnicoId={w.id} />}
@@ -666,6 +729,11 @@ function WorkerScreen({ worker: w, perfil, go }: { worker: WorkerType; perfil: P
               ? <><Stars r={w.rating} size={14} /><span className="text-base font-extrabold" style={{ color: N }}>{w.rating.toFixed(1)}</span>
                   <span className="text-sm" style={{ color: MU }}>({w.reviews} reseñas)</span></>
               : <span className="text-sm" style={{ color: MU }}>Sin reseñas aún</span>}
+            <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full"
+              style={{ backgroundColor: w.disponibleAhora ? GL : '#F3F4F6', color: w.disponibleAhora ? '#065F46' : '#4B5563' }}>
+              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: w.disponibleAhora ? G : '#9CA3AF' }} />
+              {w.disponibleAhora ? 'DISPONIBLE' : 'OCUPADO'}
+            </span>
           </div>
           {w.description && <p className="text-sm leading-relaxed mb-5" style={{ color: N }}>{w.description}</p>}
           <div className="grid grid-cols-3 gap-2.5 mb-5">
@@ -681,7 +749,7 @@ function WorkerScreen({ worker: w, perfil, go }: { worker: WorkerType; perfil: P
       </div>
       {perfil.rol === 'cliente' && (
         <div className="flex-shrink-0 px-4 pt-3 border-t" style={{ backgroundColor: W, borderColor: BD, paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
-          <PrimaryBtn onClick={() => go('request')}>Solicitar servicio</PrimaryBtn>
+          <PrimaryBtn onClick={() => onSolicitar(w)}>Solicitar servicio</PrimaryBtn>
         </div>
       )}
     </div>
@@ -699,14 +767,14 @@ function MetodoPagoGrid({ sel, onSelect }: { sel: MetodoPago | null; onSelect: (
         return (
           <button key={m.id} type="button" role="radio" aria-checked={on} aria-disabled={diferido}
             disabled={diferido} onClick={() => onSelect(m.id)}
-            className={`min-h-[64px] rounded-2xl border px-3 py-2.5 text-left transition-all ${i === METODOS.length - 1 ? 'col-span-2' : ''}`}
+            className={`min-h-[96px] rounded-2xl border px-3 py-2.5 text-left transition-all ${i === METODOS.length - 1 ? 'col-span-2' : ''}`}
             style={{ borderColor: on ? G : BD, backgroundColor: diferido ? '#F3F4F6' : on ? GL : W, opacity: diferido ? 0.65 : 1, boxShadow: on ? `0 0 0 1.5px ${G}50` : undefined }}>
-            <div className="flex items-center gap-2">
-              <span className="text-lg leading-none" aria-hidden="true">{m.icono}</span>
-              <span className="text-[13px] font-extrabold leading-tight" style={{ color: N }}>{m.nombre}</span>
-              {diferido && <span className="ml-auto text-[9px] font-extrabold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#E5E7EB', color: '#4B5563' }}>Pronto</span>}
+            <div className="flex items-start justify-between gap-2">
+              <MetodoPagoLogo id={m.id} alto={28} />
+              {diferido && <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#E5E7EB', color: '#4B5563' }}>PRONTO</span>}
             </div>
-            <div className="text-[11px] mt-1 leading-tight" style={{ color: MU }}>{m.descripcion}</div>
+            <div className="text-[13px] font-extrabold leading-tight mt-1.5" style={{ color: N }}>{m.nombre}</div>
+            <div className="text-[11px] mt-0.5 leading-tight" style={{ color: MU }}>{m.descripcion}</div>
           </button>
         )
       })}
@@ -717,9 +785,41 @@ function MetodoPagoGrid({ sel, onSelect }: { sel: MetodoPago | null; onSelect: (
 function RequestScreen({ worker: w, perfil, go, onCreated }: { worker: WorkerType; perfil: Perfil; go: NavFn; onCreated: (metodo: MetodoPago) => void }) {
   const [form, setForm] = useState({ name: perfil.nombre, phone: perfil.telefono ?? '', address: '', date: '', desc: '' })
   const [metodoPago, setMetodoPago] = useState<MetodoPago | null>(null)
+  const [coords, setCoords] = useState<{ latitud: number; longitud: number; precision?: number | null } | null>(null)
+  const [ubicando, setUbicando] = useState(false)
+  const [ubicMsj, setUbicMsj] = useState('')
+  const [ubicOk, setUbicOk] = useState(false)
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const infoPago = metodoPagoInfo(metodoPago)
+
+  /**
+   * El permiso de ubicación se pide SOLO al tocar este botón. La dirección que
+   * devuelve el geocodificador queda editable; si algo falla, no se inventa
+   * ninguna dirección y el cliente puede seguir escribiéndola a mano.
+   */
+  const usarMiUbicacion = async () => {
+    if (ubicando) return
+    setUbicMsj(''); setUbicOk(false); setUbicando(true)
+    try {
+      const c = await obtenerUbicacionActual()
+      const d = await geocodificarInversa(c)
+      setForm(f => ({ ...f, address: soloDireccion(d.direccion) }))
+      setCoords(c)
+      setUbicOk(true)
+      const bajaPrecision = c.precision != null && c.precision > 200
+      setUbicMsj(
+        `Ubicación obtenida correctamente.${bajaPrecision ? ' La señal tiene baja precisión, así que revisa la dirección con cuidado.' : ''} ` +
+        'Revisa que sea correcta; puedes editarla antes de enviar. También puedes ingresar tu dirección manualmente.',
+      )
+    } catch (e) {
+      console.error(e)
+      const msg = mensajeUbicacion(e)
+      setUbicMsj(/manualmente/i.test(msg) ? msg : `${msg} También puedes ingresar tu dirección manualmente.`)
+    } finally {
+      setUbicando(false)
+    }
+  }
 
   const enviar = async () => {
     setMessage('')
@@ -735,8 +835,12 @@ function RequestScreen({ worker: w, perfil, go, onCreated }: { worker: WorkerTyp
 
     setLoading(true)
     try {
-      // El método de pago se guarda con la solicitud; ya no se pregunta solo al final.
-      await crearSolicitud({ clienteId: perfil.id, tecnicoId: w.id, nombre: form.name.trim(), telefono: phone, direccion, fecha: form.date, descripcion: form.desc.trim(), metodoPago })
+      // El método de pago y las coordenadas (si usó el GPS) se guardan con la solicitud.
+      await crearSolicitud({
+        clienteId: perfil.id, tecnicoId: w.id, nombre: form.name.trim(), telefono: phone, direccion,
+        fecha: form.date, descripcion: form.desc.trim(), metodoPago,
+        latitud: coords?.latitud ?? null, longitud: coords?.longitud ?? null,
+      })
       onCreated(metodoPago)
     } catch (e) {
       console.error(e); setMessage(errMsg(e))
@@ -768,7 +872,23 @@ function RequestScreen({ worker: w, perfil, go, onCreated }: { worker: WorkerTyp
         <Field label="Dirección de residencia *">
           <input type="text" autoComplete="street-address" autoCapitalize="words" maxLength={150} value={form.address} onChange={e => setForm({ ...form, address: soloDireccion(e.target.value) })}
             className={INPUT} style={INPUT_STYLE} />
+          <button type="button" onClick={usarMiUbicacion} disabled={ubicando}
+            className="mt-2 w-full min-h-[48px] px-4 rounded-2xl text-[13px] font-extrabold border flex items-center justify-center gap-2"
+            style={{ borderColor: BD, color: N, backgroundColor: W, opacity: ubicando ? 0.65 : 1 }}>
+            <IconoMaterial name="my_location" size={18} />
+            {ubicando ? 'Obteniendo ubicación…' : 'USAR MI UBICACIÓN ACTUAL'}
+          </button>
+          {ubicMsj && (
+            <p className="text-xs mt-1.5 font-semibold leading-relaxed" style={{ color: ubicOk ? '#065F46' : '#991B1B' }}>{ubicMsj}</p>
+          )}
           <p className="text-xs mt-1" style={{ color: MU }}>El técnico la usará para llegar a tu domicilio. Incluye barrio y, si aplica, casa o apartamento.</p>
+          <p className="text-[10px] mt-1" style={{ color: MU }}>
+            Dirección sugerida con datos de{' '}
+            <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer" className="underline">
+              © OpenStreetMap contributors
+            </a>
+            {' '}(Nominatim). Puedes editarla antes de enviar.
+          </p>
         </Field>
         <Field label="Fecha preferida *">
           <input type="date" value={form.date} min={todayLocal()} max={fechaMax()} onChange={e => setForm({ ...form, date: e.target.value })} className={INPUT} style={INPUT_STYLE} />
@@ -782,9 +902,9 @@ function RequestScreen({ worker: w, perfil, go, onCreated }: { worker: WorkerTyp
           {infoPago && (
             <div className="mt-2 rounded-2xl px-3.5 py-3" style={{ backgroundColor: GL, border: `1px solid ${G}50` }}>
               <p className="text-xs leading-relaxed" style={{ color: N }}>{infoPago.instruccionCliente}</p>
-              {infoPago.requierePasarela && (
+              {metodoDiferido(infoPago.id) && (
                 <p className="text-[11px] font-bold mt-1.5" style={{ color: '#92400E' }}>
-                  Disponible cuando Resolve active pagos reales
+                  PRONTO · usa Nequi, Bancolombia, Daviplata o efectivo
                 </p>
               )}
             </div>
@@ -801,7 +921,7 @@ function RequestScreen({ worker: w, perfil, go, onCreated }: { worker: WorkerTyp
   )
 }
 
-function ConfirmScreen({ worker: w, metodoPago, go }: { worker: WorkerType; metodoPago: MetodoPago | null; go: NavFn }) {
+function ConfirmScreen({ worker: w, metodoPago, go, enEspera = false }: { worker: WorkerType; metodoPago: MetodoPago | null; go: NavFn; enEspera?: boolean }) {
   const pago = metodoPagoInfo(metodoPago)
   return (
     <div className="flex flex-col h-full px-5 pt-6 overflow-y-auto" style={{ backgroundColor: BG, scrollbarWidth: 'none', paddingBottom: 'max(20px, env(safe-area-inset-bottom))' }}>
@@ -819,15 +939,26 @@ function ConfirmScreen({ worker: w, metodoPago, go }: { worker: WorkerType; meto
           </div>
         </Card>
         <div className="mt-3 w-full rounded-2xl p-4 text-left" style={{ backgroundColor: W, border: `1px solid ${BD}` }}>
-          <div className="text-xs font-extrabold uppercase tracking-wider mb-1" style={{ color: GD }}>💳 Método de pago</div>
+          <div className="flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wider mb-1" style={{ color: GD }}>
+            <IconoMaterial name="credit_card" size={14} />
+            Método de pago
+          </div>
           <div className="flex items-center gap-2">
-            <span className="text-xl leading-none" aria-hidden="true">{pago?.icono ?? '💳'}</span>
+            <MetodoPagoLogo id={metodoPago} alto={28} />
             <div className="min-w-0">
               <p className="text-sm font-extrabold" style={{ color: N }}>{pago?.nombre ?? 'Por definir'}</p>
               <p className="text-xs" style={{ color: MU }}>{pago?.descripcion ?? 'Podrás elegirlo más adelante.'}</p>
             </div>
           </div>
         </div>
+        {enEspera && (
+          <div className="mt-3 w-full rounded-2xl p-4 text-left" style={{ backgroundColor: '#FEF3C7', border: '1px solid #F59E0B70' }}>
+            <p className="text-sm font-extrabold" style={{ color: '#92400E' }}>⏳ Tu solicitud ha sido registrada</p>
+            <p className="text-xs mt-1 leading-relaxed" style={{ color: '#92400E' }}>
+              Este técnico tiene un servicio en curso, por lo que tu atención podría tardar más de lo habitual. Te notificaremos cuando llegue tu turno.
+            </p>
+          </div>
+        )}
       </div>
       <div className="space-y-2.5">
         <PrimaryBtn onClick={() => go('orders')}>Ver mis solicitudes</PrimaryBtn>
@@ -920,7 +1051,7 @@ function DatosServicio({ p, onNavigate }: { p: Pedido; onNavigate?: () => void }
       <div className="text-xs font-extrabold uppercase tracking-wider" style={{ color: GD }}>Datos del servicio</div>
       <FilaDato l="Cliente">{p.nombreContacto}</FilaDato>
       <FilaDato l="Celular"><a href={`tel:${p.telefonoContacto}`} className="underline">{p.telefonoContacto}</a></FilaDato>
-      <FilaDato l="Dirección">{p.direccion ?? 'No registrada (solicitud anterior)'}</FilaDato>
+      <FilaDato l="Dirección">{p.direccion ?? 'Sin dirección registrada en esta solicitud'}</FilaDato>
       <FilaDato l="Fecha">{new Date(p.fecha + 'T00:00:00').toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}</FilaDato>
       <FilaDato l="Servicio">{p.descripcion}</FilaDato>
       {p.precioFinal != null
@@ -929,18 +1060,21 @@ function DatosServicio({ p, onNavigate }: { p: Pedido; onNavigate?: () => void }
       {p.direccion && (
         onNavigate ? (
           /*
-           * El clic abre la ruta en Google Maps y, al mismo tiempo, registra
-           * `en_camino` en el servidor. Así el cliente ve "Técnico dirigiéndose
-           * a su domicilio" sin que el técnico tenga que tocar otro botón.
+           * El clic abre la ruta en la app de mapas del celular y, al mismo tiempo,
+           * registra `en_camino` en el servidor. Así el cliente ve "Técnico
+           * dirigiéndose a su domicilio" sin que el técnico toque otro botón.
+           * No mostramos el logotipo de Google Maps: Resolve no usa su SDK.
            */
           <a href={urlGoogleMaps(p.direccion)} target="_blank" rel="noopener noreferrer" onClick={onNavigate}
             className="flex items-center justify-center gap-2 min-h-[48px] rounded-2xl text-sm font-extrabold text-center px-3" style={{ backgroundColor: N, color: W }}>
-            🧭 Usar Google Maps para ir al domicilio
+            <IconoMaterial name="near_me" size={18} />
+            Abrir ruta en el mapa
           </a>
         ) : (
           <a href={urlGoogleMaps(p.direccion)} target="_blank" rel="noopener noreferrer"
             className="flex items-center justify-center gap-2 min-h-[48px] rounded-2xl text-sm font-extrabold" style={{ backgroundColor: N, color: W }}>
-            📍 Cómo llegar en Google Maps
+            <IconoMaterial name="directions" size={18} />
+            Cómo llegar en el mapa
           </a>
         )
       )}
@@ -960,6 +1094,11 @@ function SeguimientoCliente({ p }: { p: Pedido }) {
   return (
     <div className="mt-3 rounded-2xl p-3.5" style={{ backgroundColor: W, border: `1px solid ${BD}` }}>
       <div className="text-xs font-extrabold uppercase tracking-wider mb-2" style={{ color: N }}>Seguimiento del servicio</div>
+      {prog.enEspera && (
+        <div className="mb-3 rounded-xl px-3 py-2.5 text-xs leading-relaxed font-semibold" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>
+          ⏳ Tu solicitud está en espera. El técnico la atenderá cuando termine el servicio anterior; se activará automáticamente y no se atenderá al mismo tiempo.
+        </div>
+      )}
       <ol className="space-y-2.5">
         {pasos.map((paso, i) => (
           <li key={paso.label} className="flex items-center gap-2.5">
@@ -979,13 +1118,26 @@ function SeguimientoCliente({ p }: { p: Pedido }) {
 /** Tarjeta que exige la confirmación del cliente antes de que el servicio avance. */
 function ConfirmacionCliente({ p, busy, onConfirmar }: { p: Pedido; busy: boolean; onConfirmar: () => void }) {
   if (!esperaConfirmacionCliente(p.estado)) return null
+  // Si el técnico ya tenía un servicio, la solicitud quedó en cola: se avisa que la espera será mayor.
+  const enEspera = esEnEspera(p.estado)
   return (
     <div className="mt-3 rounded-2xl p-3.5" style={{ backgroundColor: GL, border: `1.5px solid ${G}70` }}>
       <div className="text-xs font-extrabold uppercase tracking-wider mb-1" style={{ color: GD }}>✅ Confirma a tu técnico</div>
-      <p className="text-sm leading-relaxed mb-3" style={{ color: N }}>
-        <strong>{p.tecnicoNombre}</strong> está disponible para atenderte. Confirma para que pueda dirigirse a tu domicilio.
-      </p>
-      <AccionBtn primary label={busy ? 'Confirmando…' : 'Confirmar técnico'} disabled={busy} onClick={onConfirmar} />
+      {enEspera ? (
+        <>
+          <p className="text-sm leading-relaxed mb-3" style={{ color: N }}>
+            <strong>{p.tecnicoNombre}</strong> aceptó tu solicitud, pero en este momento está atendiendo otro servicio.
+          </p>
+          <div className="mb-3 rounded-xl px-3 py-2.5 text-xs leading-relaxed font-semibold" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>
+            ⏳ Si confirmas, tu solicitud quedará <strong>en espera</strong>. Se activará automáticamente cuando termine el servicio actual, en orden de aceptación. Te atenderá lo más pronto posible.
+          </div>
+        </>
+      ) : (
+        <p className="text-sm leading-relaxed mb-3" style={{ color: N }}>
+          <strong>{p.tecnicoNombre}</strong> está disponible para atenderte. Confirma para que pueda dirigirse a tu domicilio.
+        </p>
+      )}
+      <AccionBtn primary label={busy ? 'Confirmando…' : enEspera ? 'Confirmar y esperar mi turno' : 'Confirmar técnico'} disabled={busy} onClick={onConfirmar} />
     </div>
   )
 }
@@ -1101,9 +1253,7 @@ function PagoBox({ pedido, onSaved, onAbrirChat }: { pedido: Pedido; onSaved: ()
     setBusy(true); setMsg(''); setOk('')
     try {
       await registrarMetodoPago(pedido.id, sel)
-      setOk(sel === 'efectivo'
-        ? 'Pago en efectivo guardado. El técnico lo confirmará al recibirlo.'
-        : 'Método de pago guardado. El técnico ya puede verlo y confirmará cuando reciba el dinero.')
+      setOk('Método de pago guardado. El técnico ya puede verlo y confirmará cuando reciba el dinero.')
       onSaved()
     } catch (e) {
       console.error(e); setMsg(errMsg(e))
@@ -1140,7 +1290,7 @@ function PagoBox({ pedido, onSaved, onAbrirChat }: { pedido: Pedido; onSaved: ()
         <div className="mt-2 rounded-2xl px-3.5 py-3" style={{ backgroundColor: '#F7FAF7', border: `1px solid ${BD}` }}>
           <p className="text-xs font-extrabold uppercase tracking-wider mb-1" style={{ color: MU }}>Método elegido</p>
           <div className="flex items-center gap-2">
-            <span className="text-xl leading-none" aria-hidden="true">{infoGuardado?.icono ?? '💳'}</span>
+            <MetodoPagoLogo id={pedido.metodoPago} alto={26} />
             <div className="min-w-0">
               <p className="text-sm font-extrabold" style={{ color: N }}>{infoGuardado?.nombre ?? pedido.metodoPago}</p>
               <p className="text-xs" style={{ color: MU }}>{etiquetaEstadoPago(pedido.pagoEstado)}</p>
@@ -1163,9 +1313,9 @@ function PagoBox({ pedido, onSaved, onAbrirChat }: { pedido: Pedido; onSaved: ()
           {info && (
             <div className="mt-3 rounded-2xl px-3.5 py-3" style={{ backgroundColor: '#F7FAF7', border: `1px solid ${BD}` }}>
               <p className="text-xs leading-relaxed" style={{ color: N }}>{info.instruccionCliente}</p>
-              {info.requierePasarela && (
+              {metodoDiferido(info.id) && (
                 <p className="text-[11px] font-bold mt-1.5" style={{ color: '#92400E' }}>
-                  Disponible cuando Resolve active pagos reales
+                  PRONTO · usa Nequi, Bancolombia, Daviplata o efectivo
                 </p>
               )}
               {info.grupo === 'transferencia' && onAbrirChat && (
@@ -1200,7 +1350,7 @@ function PagoResumenTecnico({ p, onSaved }: { p: Pedido; onSaved?: () => void })
   const [msg, setMsg] = useState('')
   const [ok, setOk] = useState('')
   const puedeConfirmar = p.estado === 'completada' && p.pagoEstado !== 'pagado' &&
-    p.pagoEstado !== 'cancelado' && !!info && !info.requierePasarela
+    p.pagoEstado !== 'cancelado' && metodoHabilitado(p.metodoPago)
 
   const confirmar = async () => {
     if (!p.metodoPago) return setMsg('El cliente aún no ha elegido método de pago.')
@@ -1219,18 +1369,24 @@ function PagoResumenTecnico({ p, onSaved }: { p: Pedido; onSaved?: () => void })
   return (
     <div className="mt-3 rounded-2xl p-3.5" style={{ backgroundColor: W, border: `1px solid ${BD}` }}>
       <div className="flex items-center justify-between gap-2 mb-1">
-        <div className="text-xs font-extrabold uppercase tracking-wider" style={{ color: N }}>💳 Pago del cliente</div>
+        <div className="flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wider" style={{ color: N }}>
+          <IconoMaterial name="credit_card" size={14} />
+          Pago del cliente
+        </div>
         {p.metodoPago && <PagoBadge estado={p.pagoEstado} />}
       </div>
-      <p className="text-sm font-bold" style={{ color: N }}>{resumenPagoTecnico(p.metodoPago, p.pagoEstado)}</p>
+      <div className="flex items-center gap-2">
+        <MetodoPagoLogo id={p.metodoPago} alto={26} />
+        <p className="text-sm font-bold min-w-0" style={{ color: N }}>{resumenPagoTecnico(p.metodoPago, p.pagoEstado)}</p>
+      </div>
       {info ? (
         <p className="text-xs mt-1 leading-relaxed" style={{ color: MU }}>{info.instruccionTecnico}</p>
       ) : (
         <p className="text-xs mt-1" style={{ color: MU }}>Todavía no ha elegido cómo pagar. Puedes recordárselo por el chat.</p>
       )}
-      {info?.requierePasarela && (
+      {metodoDiferido(p.metodoPago) && (
         <p className="text-[11px] font-bold mt-1.5" style={{ color: '#92400E' }}>
-          Los pagos con tarjeta están diferidos hasta que Resolve active pagos reales. Pídele al cliente un método manual.
+          PRONTO · este método aún no está habilitado. Pídele al cliente Nequi, Bancolombia, Daviplata o efectivo.
         </p>
       )}
       {puedeConfirmar && (
@@ -1455,7 +1611,6 @@ function ChatScreen({ pedido, perfil, go, volver }: { pedido: Pedido; perfil: Pe
 
 
 type AccionSolicitud = 'aceptar' | 'rechazar' | 'cancelar' | 'confirmar' | 'navegar' | 'llegar' | 'completar'
-
 const OK_ACCION: Record<AccionSolicitud, string> = {
   aceptar: '✓ Solicitud aceptada. El cliente debe confirmarla para que puedas ir al domicilio.',
   rechazar: 'Solicitud rechazada.',
@@ -1465,6 +1620,9 @@ const OK_ACCION: Record<AccionSolicitud, string> = {
   llegar: '✓ Llegada registrada. El cliente ya ve que estás en el domicilio.',
   completar: '✓ Solicitud finalizada. Ya estás disponible para recibir nuevas solicitudes.',
 }
+
+/** Encabezado de sección o tarjeta de solicitud, en el orden en que se pinta. */
+type ElementoLista = { tipo: 'seccion'; titulo: string; nota?: string } | { tipo: 'pedido'; p: Pedido }
 
 function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas' }: { perfil: Perfil; go: NavFn; onRate: (p: Pedido) => void; onChat: (p: Pedido, volver: Screen) => void; modo?: 'activas' | 'completadas' }) {
   const live = useContext(LiveCtx)
@@ -1490,6 +1648,39 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas' }: { perfil
   // Disponibilidad derivada de las solicitudes activas, no de una columna que pueda quedar vieja.
   const disponibilidad = useMemo(() => disponibilidadTecnico(pedidos.data), [pedidos.data])
 
+  /*
+   * Vista del técnico separada por secciones para que nunca confunda su
+   * servicio actual con la cola ni con las solicitudes nuevas:
+   *   SERVICIO ACTUAL → SOLICITUDES EN ESPERA (orden de aceptación) → NUEVAS.
+   * El historial tiene su propia sección en la pestaña "Terminadas".
+   */
+  const elementos = useMemo<ElementoLista[]>(() => {
+    if (!esTec) return pedidos.data.map(p => ({ tipo: 'pedido' as const, p }))
+    if (modo === 'completadas') {
+      return [
+        { tipo: 'seccion', titulo: 'SOLICITUDES TERMINADAS' },
+        ...lista.map(p => ({ tipo: 'pedido' as const, p })),
+      ]
+    }
+    const activos = lista.filter(p => (ESTADOS_ACTIVOS_TECNICO as readonly string[]).includes(p.estado))
+    const enEspera = ordenarEnEspera(lista.filter(p => esEnEspera(p.estado)))
+    const nuevas = lista.filter(p => p.estado === 'pendiente')
+    const filas: ElementoLista[] = []
+    if (activos.length) {
+      filas.push({ tipo: 'seccion', titulo: 'SERVICIO ACTUAL', nota: 'Solo puedes atender un servicio a la vez.' })
+      filas.push(...activos.map(p => ({ tipo: 'pedido' as const, p })))
+    }
+    if (enEspera.length) {
+      filas.push({ tipo: 'seccion', titulo: 'SOLICITUDES EN ESPERA', nota: 'Se activarán una por una, en orden de aceptación, cuando termines el servicio actual.' })
+      filas.push(...enEspera.map(p => ({ tipo: 'pedido' as const, p })))
+    }
+    if (nuevas.length) {
+      filas.push({ tipo: 'seccion', titulo: 'NUEVAS SOLICITUDES', nota: 'Puedes aceptarlas aunque estés ocupado: quedarán en espera.' })
+      filas.push(...nuevas.map(p => ({ tipo: 'pedido' as const, p })))
+    }
+    return filas
+  }, [esTec, modo, lista, pedidos.data])
+
   // Resalta unos segundos las solicitudes que acaban de aparecer (la primera carga no cuenta)
   useEffect(() => {
     if (pedidos.loading) return
@@ -1504,13 +1695,19 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas' }: { perfil
   const ejecutar = async (id: number, accion: AccionSolicitud) => {
     if (busy !== null) return // evita doble toque mientras llega la respuesta
     setMessage(''); setOkMessage(''); setBusy(id)
+    let mensajeOk = OK_ACCION[accion]
     try {
       switch (accion) {
         case 'aceptar': {
-          // Mientras haya otro servicio activo, la nueva se conserva pero no se puede aceptar.
-          const permiso = puedeAceptarSolicitud(pedidos.data, id)
-          if (!permiso.puede) throw new Error(permiso.motivo)
-          await cambiarEstado(id, 'aceptada')
+          /*
+           * El servidor decide si la solicitud pasa a ser el servicio actual
+           * (`aceptada`) o si queda en cola (`en_espera`) porque el técnico ya
+           * tenía uno activo. Nunca se rechaza por estar ocupado.
+           */
+          const estado = await aceptarSolicitud(id)
+          if (estado === 'en_espera') {
+            mensajeOk = 'Solicitud aceptada. Quedó en espera y se activará cuando termines el servicio actual.'
+          }
           break
         }
         case 'rechazar': await cambiarEstado(id, 'rechazada'); break
@@ -1538,7 +1735,7 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas' }: { perfil
           break
         }
       }
-      setOkMessage(OK_ACCION[accion])
+      setOkMessage(mensajeOk)
       pedidos.reload()
     }
     catch (e) { console.error(e); setMessage(errMsg(e)) }
@@ -1589,10 +1786,19 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas' }: { perfil
         {!pedidos.loading && !pedidos.error && lista.length === 0 && (
           <p className="text-sm text-center py-10" style={{ color: MU }}>{vacio}</p>
         )}
-        {lista.map(p => {
+        {elementos.map((el, i) => {
+          if (el.tipo === 'seccion') {
+            return (
+              <div key={`seccion-${el.titulo}-${i}`} className="pt-1">
+                <h3 className="text-[11px] font-extrabold uppercase tracking-widest" style={{ color: GD }}>{el.titulo}</h3>
+                {el.nota && <p className="text-[11px] mt-0.5 leading-snug" style={{ color: MU }}>{el.nota}</p>}
+              </div>
+            )
+          }
+          const p = el.p
           const accion = esTec ? accionDelTecnico(p.estado) : null
-          // Dirección y contacto completos: solo después de aceptar (no en pendiente ni cerradas).
-          const verDatos = esTec && ['aceptada', 'confirmada', 'en_camino', 'en_proceso', 'llego', 'completada'].includes(p.estado)
+          // Dirección y contacto completos: después de aceptar (incluso si quedó en espera).
+          const verDatos = esTec && ['aceptada', 'confirmada', 'en_camino', 'en_proceso', 'llego', 'completada', 'en_espera', 'confirmada_en_espera'].includes(p.estado)
           const permisoAceptar = esTec && p.estado === 'pendiente' ? puedeAceptarSolicitud(pedidos.data, p.id) : null
           const puedeEscribirChat = evaluarAccesoChat(p.estado).puedeEscribir
           return (
@@ -1610,8 +1816,18 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas' }: { perfil
                     {esTec && <> · <a href={`tel:${p.telefonoContacto}`} className="underline font-semibold">📞 {p.telefonoContacto}</a></>}
                   </div>
                   <p className="text-sm leading-relaxed" style={{ color: N }}>{p.descripcion}</p>
-                  {!esTec && p.direccion && <p className="text-xs mt-1.5" style={{ color: MU }}>📍 {p.direccion}</p>}
-                  {esTec && p.estado === 'pendiente' && <p className="text-xs mt-1.5" style={{ color: MU }}>📍 La dirección completa se muestra cuando aceptas la solicitud.</p>}
+                  {!esTec && p.direccion && (
+                    <p className="text-xs mt-1.5 inline-flex items-center gap-1" style={{ color: MU }}>
+                      <IconoMaterial name="location_on" size={12} />
+                      {p.direccion}
+                    </p>
+                  )}
+                  {esTec && p.estado === 'pendiente' && (
+                    <p className="text-xs mt-1.5 inline-flex items-center gap-1" style={{ color: MU }}>
+                      <IconoMaterial name="location_on" size={12} />
+                      La dirección completa se muestra cuando aceptas la solicitud.
+                    </p>
+                  )}
                   {p.precioFinal != null
                     ? <div className="text-sm font-bold mt-2" style={{ color: GD }}>Precio final: {fmt(p.precioFinal)}</div>
                     : p.precioMin != null && p.precioMax != null && <div className="text-xs mt-2" style={{ color: MU }}>Referencia: {fmt(p.precioMin)} – {fmt(p.precioMax)}</div>}
@@ -1648,8 +1864,8 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas' }: { perfil
               <div className="flex gap-2 mt-3 flex-wrap">
                 {esTec && p.estado === 'pendiente' && (
                   <>
-                    <AccionBtn primary label={busy === p.id ? 'Aceptando…' : 'Aceptar'}
-                      disabled={busy !== null || !permisoAceptar?.puede} onClick={() => ejecutar(p.id, 'aceptar')} />
+                    <AccionBtn primary label={busy === p.id ? 'Aceptando…' : permisoAceptar?.enEspera ? 'Aceptar (quedará en espera)' : 'Aceptar'}
+                      disabled={busy !== null} onClick={() => ejecutar(p.id, 'aceptar')} />
                     <AccionBtn label="Rechazar" disabled={busy !== null} onClick={() => ejecutar(p.id, 'rechazar')} />
                   </>
                 )}
@@ -1675,13 +1891,13 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas' }: { perfil
                 {p.estado === 'completada' && p.calificada && <span className="text-xs font-semibold self-center" style={{ color: MU }}>✓ Ya calificaste</span>}
               </div>
 
-              {/* Aviso cuando hay otro servicio activo: la nueva queda registrada, sin aceptar. */}
-              {esTec && p.estado === 'pendiente' && permisoAceptar && !permisoAceptar.puede && (
+              {/* Aviso cuando hay otro servicio activo: la nueva quedará en espera. */}
+              {esTec && p.estado === 'pendiente' && permisoAceptar?.enEspera && (
                 <p className="text-xs mt-2 rounded-xl px-3 py-2" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>{permisoAceptar.motivo}</p>
               )}
               {esTec && accion === 'navegar' && p.direccion && (
                 <p className="text-[11px] mt-2 text-center" style={{ color: MU }}>
-                  Al abrir Google Maps, el cliente verá “Técnico dirigiéndose a su domicilio”.
+                  Al abrir la ruta en el mapa, el cliente verá “Técnico dirigiéndose a su domicilio”.
                 </p>
               )}
 
@@ -2191,6 +2407,10 @@ export default function App() {
   const [authTab, setAuthTab] = useState<AuthTab>('register')
   const [perfil, setPerfil] = useState<Perfil | null>(null)
   const [worker, setWorker] = useState<WorkerType | null>(null)
+  // Técnico seleccionado que está OCUPADO: primero se confirma que la solicitud quedará en espera.
+  const [tecnicoOcupado, setTecnicoOcupado] = useState<WorkerType | null>(null)
+  // El cliente confirmó que esperará turno: la pantalla de confirmación muestra el aviso largo.
+  const [solicitudEnEspera, setSolicitudEnEspera] = useState(false)
   const [pedidoRate, setPedidoRate] = useState<Pedido | null>(null)
   const [pedidoChat, setPedidoChat] = useState<Pedido | null>(null)
   const [chatOrigen, setChatOrigen] = useState<Screen>('orders')
@@ -2325,7 +2545,7 @@ export default function App() {
     })()
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') {
-        setPerfil(null); setWorker(null); setPedidoRate(null); setPedidoChat(null); setMetodoPago(null); resetNav('splash')
+        setPerfil(null); setWorker(null); setPedidoRate(null); setPedidoChat(null); setMetodoPago(null); setSolicitudEnEspera(false); resetNav('splash')
         hecho = false
         return
       }
@@ -2361,7 +2581,7 @@ export default function App() {
   const logout = async () => {
     await cerrarSesion()
     // Si la red falló, `signOut` no emite SIGNED_OUT: limpiamos la UI aquí.
-    setPerfil(null); setWorker(null); setPedidoRate(null); setPedidoChat(null); setMetodoPago(null); resetNav('splash')
+    setPerfil(null); setWorker(null); setPedidoRate(null); setPedidoChat(null); setMetodoPago(null); setSolicitudEnEspera(false); resetNav('splash')
   }
   // Al terminar la recuperación, la sesión de Supabase ya es válida: entramos a la app.
   const finalizarRecuperacion = async () => {
@@ -2374,6 +2594,24 @@ export default function App() {
     } catch (e) { console.error(e); resetNav('auth') }
   }
   const abrirChat = (p: Pedido, volver: Screen) => { setPedidoChat(p); setChatOrigen(volver); go('chat') }
+  /*
+   * Contratar a un técnico:
+   *   · Disponible → pasa directo al formulario de solicitud.
+   *   · OCUPADO    → se pide confirmación; la solicitud se puede enviar igual y
+   *                  quedará en espera cuando el técnico la acepte.
+   */
+  const solicitarTecnico = (w: WorkerType) => {
+    setWorker(w)
+    if (w.disponibleAhora) { setSolicitudEnEspera(false); setTecnicoOcupado(null); go('request') }
+    else setTecnicoOcupado(w)
+  }
+  const confirmarSolicitudOcupado = () => {
+    if (!tecnicoOcupado) return
+    setWorker(tecnicoOcupado)
+    setSolicitudEnEspera(true)
+    setTecnicoOcupado(null)
+    go('request')
+  }
 
   // Cuando el técnico marca el servicio como terminado, el cliente pasa directo a calificar.
   // Se espera a que esté en una pantalla segura para no perder un formulario o un mensaje del chat.
@@ -2418,10 +2656,10 @@ export default function App() {
   else if (!perfil || (needsWorker && !worker) || (current === 'rate' && !pedidoRate) || (current === 'chat' && !pedidoChat)) content = <SplashScreen openAuth={t => { setAuthTab(t); go('auth') }} />
   else {
     switch (current) {
-      case 'home': content = <HomeScreen perfil={perfil} go={go} setWorker={setWorker} />; break
-      case 'worker': content = <WorkerScreen worker={worker!} perfil={perfil} go={go} />; break
+      case 'home': content = <HomeScreen perfil={perfil} go={go} setWorker={setWorker} onSolicitar={solicitarTecnico} />; break
+      case 'worker': content = <WorkerScreen worker={worker!} perfil={perfil} go={go} onSolicitar={solicitarTecnico} />; break
       case 'request': content = <RequestScreen worker={worker!} perfil={perfil} go={go} onCreated={m => { setMetodoPago(m); go('confirm') }} />; break
-      case 'confirm': content = <ConfirmScreen worker={worker!} metodoPago={metodoPago} go={go} />; break
+      case 'confirm': content = <ConfirmScreen worker={worker!} metodoPago={metodoPago} go={go} enEspera={solicitudEnEspera} />; break
       case 'orders': content = <OrdersScreen perfil={perfil} go={go} onRate={setPedidoRate} onChat={abrirChat} />; break
       case 'done': content = <OrdersScreen perfil={perfil} go={go} onRate={setPedidoRate} onChat={abrirChat} modo="completadas" />; break
       case 'pending': content = <PendingScreen perfil={perfil} onRefresh={revisarAprobacion} onLogout={logout} />; break
@@ -2455,6 +2693,40 @@ export default function App() {
             <span className="flex-1 text-sm font-bold">{live.aviso.texto}</span>
             <span className="text-xs font-extrabold px-3 py-1.5 rounded-xl" style={{ backgroundColor: G, color: N }}>Ver</span>
           </button>
+        )}
+        {tecnicoOcupado && (
+          <div className="absolute inset-0 z-[70] flex items-end sm:items-center justify-center p-4"
+            role="dialog" aria-modal="true" aria-labelledby="tecnico-ocupado">
+            <div className="absolute inset-0 dialog-backdrop-in" style={{ backgroundColor: 'rgba(0,0,50,0.55)' }} onClick={() => setTecnicoOcupado(null)} />
+            <div className="relative w-full max-w-[380px] rounded-3xl p-5 dialog-in" style={{ backgroundColor: W, boxShadow: '0 18px 50px rgba(0,0,50,0.35)' }}>
+              <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full mb-2"
+                style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>
+                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: '#F59E0B' }} /> OCUPADO
+              </span>
+              <h4 id="tecnico-ocupado" className="text-lg font-extrabold leading-snug" style={{ color: N }}>
+                Este técnico está ocupado atendiendo otra solicitud
+              </h4>
+              <p className="text-sm mt-1.5 font-bold leading-relaxed" style={{ color: N }}>
+                ¿Deseas solicitar sus servicios y esperar tu turno?
+              </p>
+              <p className="text-sm mt-1.5 leading-relaxed" style={{ color: MU }}>
+                Si envías tu solicitud, quedará <strong style={{ color: N }}>en espera</strong> cuando el técnico la acepte y se activará automáticamente al terminar el servicio actual, en orden de aceptación. Nunca atenderá dos servicios al mismo tiempo.
+              </p>
+              <div className="mt-2 rounded-xl px-3 py-2.5 text-xs leading-relaxed font-semibold" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>
+                ⏳ Ten en cuenta que la espera puede ser mayor. Te atenderá lo más pronto posible.
+              </div>
+              <div className="flex gap-2 mt-4">
+                <button onClick={() => setTecnicoOcupado(null)} className="flex-1 min-h-[48px] px-3 rounded-2xl text-sm font-extrabold border"
+                  style={{ borderColor: BD, color: N, backgroundColor: W }}>
+                  CANCELAR
+                </button>
+                <button onClick={confirmarSolicitudOcupado} className="flex-1 min-h-[48px] px-3 rounded-2xl text-sm font-extrabold"
+                  style={{ backgroundColor: G, color: N }}>
+                  SÍ, SOLICITAR
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

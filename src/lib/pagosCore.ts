@@ -34,8 +34,8 @@ export type EstadoTransaccion = (typeof ESTADOS_TRANSACCION)[number]
 export const PROVEEDORES_PAGO = ['interno', 'wompi', 'epayco', 'efectivo', 'transferencia'] as const
 export type ProveedorPago = (typeof PROVEEDORES_PAGO)[number]
 
-/** Métodos que se pueden confirmar sin proveedor real (pago manual). */
-export const METODOS_PAGO_INTERNO = ['efectivo', 'nequi', 'bancolombia', 'bre_b'] as const
+/** Métodos habilitados que se confirman sin proveedor real (pago manual). */
+export const METODOS_PAGO_INTERNO = ['nequi', 'bancolombia', 'daviplata', 'efectivo'] as const
 export type MetodoPagoInterno = (typeof METODOS_PAGO_INTERNO)[number]
 
 export function esMetodoPagoInterno(metodo: string | null | undefined): metodo is MetodoPagoInterno {

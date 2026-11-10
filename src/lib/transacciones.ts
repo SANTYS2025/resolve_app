@@ -134,7 +134,7 @@ export async function getConfigComision(): Promise<{ pctBps: number; minimoCenta
 }
 
 /**
- * Confirma un pago manual (efectivo / Nequi / Bancolombia / Bre-B).
+ * Confirma un pago manual (Nequi / Bancolombia / Daviplata / efectivo).
  *
  * El servidor calcula el monto y la comisión; aquí no se envían valores de
  * dinero. Es idempotente: repetir la llamada devuelve la misma transacción.

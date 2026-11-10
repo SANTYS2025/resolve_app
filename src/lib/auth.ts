@@ -21,7 +21,7 @@ export function validarNuevaPassword(password: string, confirmacion: string): st
   if (!password) return 'Escribe tu nueva contraseña.'
   if (password.length < MIN_PASSWORD) return `La contraseña debe tener mínimo ${MIN_PASSWORD} caracteres.`
   if (password.length > MAX_PASSWORD) return `La contraseña no puede superar ${MAX_PASSWORD} caracteres.`
-  if (password !== confirmacion) return 'Las contraseñas no coinciden.'
+  if (password !== confirmacion) return 'Las contraseñas no coinciden'
   if (/^\s+$/.test(password)) return 'La contraseña no puede ser solo espacios.'
   return null
 }

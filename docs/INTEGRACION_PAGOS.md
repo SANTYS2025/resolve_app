@@ -14,7 +14,7 @@ pantallas se mantienen.
 1. El cliente elige el método de pago al crear la solicitud
    (`metodo_pago`, `metodo_pago_en`, `pago_estado`).
 2. Solo los métodos manuales se pueden confirmar:
-   `efectivo`, `nequi`, `bancolombia` y `bre_b`.
+   `nequi`, `bancolombia`, `daviplata` y `efectivo`.
 3. Cuando el servicio está `completada`, el cliente confirma o cambia el método.
 4. El técnico ve el método y pulsa **“Confirmar pago recibido”**. Eso llama a la
    RPC `registrar_pago_interno(solicitud_id, metodo)`.
@@ -22,8 +22,8 @@ pantallas se mantienen.
    `(precio_final ?? precio_estimado_max ?? precio_estimado_min) * 100 −
    descuento_centavos`, registra la transacción aprobada, la comisión y el neto,
    marca `solicitudes.pago_estado = 'pagado'` y encola notificaciones.
-6. Tarjeta y Google Pay se muestran como **“Pronto”**: no se pueden seleccionar
-   ni cobrar hasta habilitar pagos reales.
+6. Tarjeta, Google Pay y Bre-B se muestran como **“Pronto”**: no se pueden
+   seleccionar ni cobrar hasta habilitar pagos reales.
 
 ### Métodos
 
@@ -34,7 +34,8 @@ pantallas se mantienen.
 | Google Pay | `google_pay` | `pendiente` | Diferido (pagos reales) |
 | Nequi | `nequi` | `pendiente` | El técnico confirma al recibir |
 | Bancolombia | `bancolombia` | `pendiente` | El técnico confirma al recibir |
-| Bre-B | `bre_b` | `pendiente` | El técnico confirma al recibir |
+| Daviplata | `daviplata` | `pendiente` | El técnico confirma al recibir |
+| Bre-B | `bre_b` | `pendiente` | Diferido (próximamente) |
 | Efectivo | `efectivo` | `efectivo` | El técnico confirma al recibir |
 
 ## 2. Piezas del código

@@ -21,13 +21,13 @@ export const FAQ: Faq[] = [
     id: 'pago-tarjeta',
     categoria: 'pago',
     pregunta: '¿Puedo pagar con tarjeta?',
-    respuesta: 'Todavía no. Los pagos con tarjeta y Google Pay se habilitarán cuando Resolve active pagos reales. Por ahora elige efectivo, Nequi, Bancolombia o Bre-B; el técnico confirma cuando recibe el dinero.',
+    respuesta: 'Todavía no. Los pagos con tarjeta, Google Pay y Bre-B estarán disponibles pronto. Por ahora elige Nequi, Bancolombia, Daviplata o efectivo; el técnico confirma cuando recibe el dinero.',
   },
   {
     id: 'pago-efectivo',
     categoria: 'pago',
-    pregunta: '¿Puedo pagar en efectivo o por Nequi?',
-    respuesta: 'Sí. Elige el método al crear la solicitud. Para Nequi, Bancolombia o Bre-B, pídele los datos al técnico por el chat y confirma cuando hayas transferido.',
+    pregunta: '¿Puedo pagar por Nequi, Bancolombia, Daviplata o en efectivo?',
+    respuesta: 'Sí. Elige el método al crear la solicitud. Pídele los datos al técnico por el chat, haz la transferencia (o paga en efectivo al terminar) y confirma cuando hayas pagado.',
   },
   {
     id: 'reembolso',
@@ -63,7 +63,7 @@ export const FAQ: Faq[] = [
     id: 'tecnico-pagos',
     categoria: 'tecnico',
     pregunta: '¿Cuándo recibo el dinero de un servicio?',
-    respuesta: 'Cuando confirmas el pago recibido (efectivo, Nequi, Bancolombia o Bre-B), se registra la comisión de Resolve y tu neto. El abono a tu cuenta bancaria se hace por fuera de la app; puedes ver el detalle en Ganancias.',
+    respuesta: 'Cuando confirmas el pago recibido (Nequi, Bancolombia, Daviplata o efectivo), se registra la comisión de Resolve y tu neto. El abono a tu cuenta bancaria se hace por fuera de la app; puedes ver el detalle en Ganancias.',
   },
   {
     id: 'tecnico-documentos',

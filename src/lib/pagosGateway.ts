@@ -36,7 +36,7 @@ export function pasarelaConfigurada(): boolean {
 
 /** Mensaje único para explicar la etapa actual sin prometer un cobro. */
 export const MENSAJE_PAGO_DIFERIDO =
-  'El pago con tarjeta o Google Pay estará disponible cuando Resolve active pagos reales. Por ahora usa efectivo, Nequi, Bancolombia o Bre-B.'
+  'El pago con tarjeta, Google Pay o Bre-B estará disponible pronto. Por ahora usa Nequi, Bancolombia, Daviplata o efectivo.'
 
 /**
  * Atajo histórico conservado para no romper importaciones antiguas.

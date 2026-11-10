@@ -42,6 +42,11 @@ export type Pedido = {
   metodoPago: MetodoPago | null // el cliente lo elige al crear la solicitud (puede cambiarlo al terminarla)
   metodoPagoEn: string | null
   pagoEstado: PagoEstado
+  /** Coordenadas del domicilio guardadas al usar "Usar mi ubicación actual" (migración 20261111). */
+  latitud: number | null
+  longitud: number | null
+  /** Momento en que la solicitud entró a la cola del técnico (null si nunca esperó). */
+  enEsperaDesde: string | null
 }
 
 /** Mensaje del chat privado de una solicitud. */
@@ -297,17 +302,22 @@ export async function getDisponibilidades(tecnicoId: number): Promise<Disponibil
  * Crea la solicitud con el método de pago elegido por el cliente.
  *
  * El método se guarda desde el primer momento (ya no se pregunta al final):
- *   · `metodo_pago`     → uno de los 7 métodos del catálogo.
+ *   · `metodo_pago`     → Nequi, Bancolombia, Daviplata o efectivo (migración 20261111).
  *   · `metodo_pago_en`  → momento de la elección.
- *   · `pago_estado`     → estado inicial coherente (efectivo / pendiente).
+ *   · `pago_estado`     → estado inicial coherente.
  *
- * Los pagos con tarjeta/Google Pay están diferidos. El pago manual lo confirma
- * el técnico con `registrarPagoInterno`; ver `docs/INTEGRACION_PAGOS.md`.
+ * Si el cliente usó "Usar mi ubicación actual", se guardan también `latitud` y
+ * `longitud` junto con la dirección editable. El pago manual lo confirma el
+ * técnico con `registrarPagoInterno`; ver `docs/INTEGRACION_PAGOS.md`.
  */
 export async function crearSolicitud(p: {
   clienteId: string; tecnicoId: number; nombre: string; telefono: string; direccion: string; fecha: string; descripcion: string
   metodoPago: MetodoPago
+  latitud?: number | null
+  longitud?: number | null
 }): Promise<number> {
+  const latitud = Number.isFinite(p.latitud) ? p.latitud! : null
+  const longitud = Number.isFinite(p.longitud) ? p.longitud! : null
   const { data, error } = await supabase.from('solicitudes').insert({
     cliente_id: p.clienteId, tecnico_id: p.tecnicoId,
     nombre_contacto: p.nombre, telefono_contacto: p.telefono, direccion: p.direccion,
@@ -315,6 +325,8 @@ export async function crearSolicitud(p: {
     metodo_pago: p.metodoPago,
     metodo_pago_en: new Date().toISOString(),
     pago_estado: estadoPagoInicial(p.metodoPago),
+    latitud,
+    longitud,
   }).select('id').single()
   if (error) throw error
   return data.id as number
@@ -328,6 +340,7 @@ type PedidoRow = {
   precio_estimado_min: number | null; precio_estimado_max: number | null; precio_final: number | null
   descuento_centavos?: number | null; cupon_codigo?: string | null
   metodo_pago?: string | null; metodo_pago_en?: string | null; pago_estado?: string | null
+  latitud?: number | null; longitud?: number | null; en_espera_desde?: string | null
   tecnico_id: number
   tecnicos: { nombre_publico: string } | { nombre_publico: string }[] | null
   calificaciones: unknown
@@ -342,6 +355,8 @@ const COLS_V2 = COLS_BASE + ',direccion,diagnostico,diagnostico_en,solicitud_cal
 const COLS_V3 = COLS_V2 + ',metodo_pago,metodo_pago_en,pago_estado'
 // Con las columnas de cupón de la migración 20261108.
 const COLS_V4 = COLS_V3 + ',descuento_centavos,cupon_codigo'
+// Con las columnas de cola y GPS de la migración 20261111.
+const COLS_V5 = COLS_V4 + ',latitud,longitud,en_espera_desde'
 
 export async function getPedidos(perfil: Perfil): Promise<Pedido[]> {
   let filtroTec: number | null = null
@@ -354,8 +369,9 @@ export async function getPedidos(perfil: Perfil): Promise<Pedido[]> {
     return filtroTec ? q.eq('tecnico_id', filtroTec) : q.eq('cliente_id', perfil.id)
   }
 
-  let res = await consulta(COLS_V4)
+  let res = await consulta(COLS_V5)
   // Si una migración aún no se ejecutó, la app sigue cargando con las columnas disponibles
+  if (res.error) { const r5 = await consulta(COLS_V4); if (!r5.error) res = r5 }
   if (res.error) { const r4 = await consulta(COLS_V3); if (!r4.error) res = r4 }
   if (res.error) { const r2 = await consulta(COLS_V2); if (!r2.error) res = r2 }
   if (res.error) { const r3 = await consulta(COLS_BASE); if (!r3.error) res = r3 }
@@ -382,6 +398,9 @@ export async function getPedidos(perfil: Perfil): Promise<Pedido[]> {
       metodoPago: esMetodoPago(r.metodo_pago) ? r.metodo_pago : null,
       metodoPagoEn: r.metodo_pago_en ?? null,
       pagoEstado,
+      latitud: r.latitud != null && Number.isFinite(Number(r.latitud)) ? Number(r.latitud) : null,
+      longitud: r.longitud != null && Number.isFinite(Number(r.longitud)) ? Number(r.longitud) : null,
+      enEsperaDesde: r.en_espera_desde ?? null,
     }
   })
 }
@@ -389,6 +408,19 @@ export async function getPedidos(perfil: Perfil): Promise<Pedido[]> {
 export async function cambiarEstado(id: number, estado: string): Promise<void> {
   const { error } = await supabase.rpc('cambiar_estado_solicitud', { p_id: id, p_estado: estado })
   if (error) throw error
+}
+
+/**
+ * El técnico acepta una solicitud.
+ *
+ * El servidor decide si se convierte en su servicio actual (`aceptada`) o si
+ * queda en cola (`en_espera`) porque ya tenía otro servicio activo. Se devuelve
+ * el estado resultante para que la interfaz explique qué pasó.
+ */
+export async function aceptarSolicitud(id: number): Promise<string> {
+  const { data, error } = await supabase.rpc('aceptar_solicitud', { p_id: id })
+  if (error) throw error
+  return typeof data === 'string' && data ? data : 'aceptada'
 }
 
 /**
@@ -407,9 +439,17 @@ async function cambiarEstadoConRpc(rpc: string, id: number, esperado: string): P
 /**
  * El cliente confirma que desea el servicio con el técnico que aceptó.
  * Sin esta confirmación la solicitud no avanza a "en camino".
+ *
+ * Si la solicitud estaba en la cola del técnico, el servidor la deja en
+ * `confirmada_en_espera` y se activará cuando termine el servicio actual.
  */
 export async function confirmarTecnico(id: number): Promise<void> {
-  await cambiarEstadoConRpc('confirmar_tecnico', id, 'confirmada')
+  const { data, error } = await supabase.rpc('confirmar_tecnico', { p_id: id })
+  if (error) throw error
+  const estado = typeof data === 'string' && data ? data : await getEstadoSolicitud(id)
+  if (estado !== 'confirmada' && estado !== 'confirmada_en_espera') {
+    throw new Error(`No se pudo confirmar la solicitud (estado actual: ${estado ?? 'desconocido'}).`)
+  }
 }
 
 /**

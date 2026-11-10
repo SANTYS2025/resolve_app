@@ -11,3 +11,5 @@ logs/
 *.log
 .claude-replay.*
 .tmp-*
+# Respaldos locales con datos de usuarios: nunca se publican.
+backups/

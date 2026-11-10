@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "format": "oxfmt",
-    "test": "node --test tests/chat.test.ts tests/pagos.test.ts tests/solicitudes.test.ts tests/pagosCore.test.ts tests/geo.test.ts tests/ganancias.test.ts tests/disponibilidad.test.ts tests/recomendacion.test.ts tests/cupones.test.ts tests/notificaciones.test.ts tests/auth.test.ts tests/soporte.test.ts tests/referidos.test.ts tests/edgePagos.test.ts"
+    "test": "node --test tests/chat.test.ts tests/pagos.test.ts tests/solicitudes.test.ts tests/pagosCore.test.ts tests/geo.test.ts tests/geocodificacion.test.ts tests/ganancias.test.ts tests/disponibilidad.test.ts tests/recomendacion.test.ts tests/cupones.test.ts tests/notificaciones.test.ts tests/auth.test.ts tests/soporte.test.ts tests/referidos.test.ts tests/edgePagos.test.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.3",

@@ -23,6 +23,9 @@ import {
 import type { Reembolso, Transaccion, TransaccionEvento } from '../lib/transacciones'
 import { resumenGanancias, resumenGastos } from '../lib/ganancias'
 import type { TransaccionResumen } from '../lib/ganancias'
+import { metodoPagoInfo } from '../lib/pagos'
+import { IconoMaterial } from '../components/IconoMaterial'
+import { MetodoPagoLogo } from '../components/MetodoPagoLogo'
 import { etiquetaEta, urlUbicacionTecnico } from '../lib/geo'
 import type { Punto } from '../lib/geo'
 import { usePublicarUbicacion, useUbicacionEnVivo } from '../lib/ubicacion'
@@ -379,9 +382,14 @@ export function TransactionsScreen({ perfil, go }: { perfil: Perfil; go: (s: 'pr
             return (
               <Card key={t.id} className="p-4">
                 <div className="flex items-start justify-between gap-2">
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-sm font-extrabold" style={{ color: N }}>Solicitud #{t.solicitudId}</p>
-                    <p className="text-xs mt-0.5" style={{ color: MU }}>{t.proveedor} · {t.referencia} · {fechaHora(t.creadaEn)}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <MetodoPagoLogo id={t.metodoPago} alto={20} />
+                      <p className="text-xs" style={{ color: MU }}>
+                        {metodoPagoInfo(t.metodoPago)?.nombre ?? 'Método no registrado'} · {t.proveedor} · {t.referencia} · {fechaHora(t.creadaEn)}
+                      </p>
+                    </div>
                   </div>
                   <TxBadge estado={t.estado} />
                 </div>
@@ -973,7 +981,10 @@ function PublicandoUbicacion({ pedido }: { pedido: Pedido }) {
   const { publicando, error } = usePublicarUbicacion(pedido.id, true)
   return (
     <div className="mt-3 rounded-2xl p-3.5" style={{ backgroundColor: GL, border: `1px solid ${G}55` }}>
-      <div className="text-xs font-extrabold uppercase tracking-wider mb-1" style={{ color: GD }}>📍 Ubicación compartida</div>
+      <div className="flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wider mb-1" style={{ color: GD }}>
+        <IconoMaterial name="location_on" size={14} />
+        Ubicación compartida
+      </div>
       <p className="text-sm" style={{ color: N }}>
         {publicando ? 'El cliente ve tu recorrido y el tiempo estimado de llegada.' : 'Preparando el envío de tu ubicación…'}
       </p>
@@ -990,7 +1001,10 @@ function UbicacionCliente({ pedido }: { pedido: Pedido }) {
   return (
     <div className="mt-3 rounded-2xl p-3.5" style={{ backgroundColor: W, border: `1px solid ${BD}` }}>
       <div className="flex items-center justify-between gap-2">
-        <div className="text-xs font-extrabold uppercase tracking-wider" style={{ color: N }}>📍 Seguimiento en vivo</div>
+        <div className="flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wider" style={{ color: N }}>
+          <IconoMaterial name="location_on" size={14} />
+          Seguimiento en vivo
+        </div>
         <span className="inline-flex items-center gap-1.5 text-[11px] font-bold" style={{ color: conectado ? GD : '#92400E' }}>
           <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: conectado ? G : '#F59E0B' }} />
           {conectado ? 'En vivo' : 'Reconectando…'}
@@ -1011,8 +1025,9 @@ function UbicacionCliente({ pedido }: { pedido: Pedido }) {
           {eta && eta.distanciaKm > 0 && <p className="text-xs mt-0.5" style={{ color: MU }}>Distancia aproximada: {eta.distanciaKm} km</p>}
           {errorDestino && <p className="text-xs mt-1" style={{ color: '#92400E' }}>{errorDestino}</p>}
           <a href={urlUbicacionTecnico({ lat: ubicacion.lat, lng: ubicacion.lng })} target="_blank" rel="noopener noreferrer"
-            className="mt-2 inline-flex items-center justify-center min-h-[44px] px-4 rounded-xl text-xs font-extrabold" style={{ backgroundColor: N, color: W }}>
-            Ver última ubicación en el mapa
+            className="mt-2 inline-flex items-center justify-center gap-1.5 min-h-[44px] px-4 rounded-xl text-xs font-extrabold" style={{ backgroundColor: N, color: W }}>
+            <IconoMaterial name="map" size={16} />
+            Abrir ubicación en el mapa
           </a>
           <p className="text-[10px] mt-1.5" style={{ color: MU }}>Actualizada {fechaHora(ubicacion.actualizadoEn)}</p>
         </>

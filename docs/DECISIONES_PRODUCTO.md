@@ -24,9 +24,10 @@ dejarla explícita.
 - El proveedor activo es `interno` (`pagos_config.proveedor_activo`) y
   `pagos_reales_habilitados = false`. La app no llama a ninguna Edge Function de
   Wompi.
-- Solo se confirman métodos manuales (`efectivo`, `nequi`, `bancolombia`,
-  `bre_b`). Tarjeta y Google Pay se muestran como “Pronto” y el servidor también
-  los rechaza.
+- Solo se confirman métodos manuales habilitados: **Nequi, Bancolombia,
+  Daviplata y efectivo**. Los demás (tarjetas, Google Pay y Bre-B) siguen
+  visibles con la etiqueta **PRONTO**, deshabilitados en la UI y rechazados por
+  el servidor. El CHECK conserva los valores históricos para no romper registros.
 - El técnico es quien pulsa “Confirmar pago recibido”; el cliente solo elige y
   guarda el método. Es la opción más simple y coincide con quién recibe el
   dinero.
@@ -44,6 +45,51 @@ dejarla explícita.
 - Las llaves futuras serán secrets del servidor (nunca `VITE_*`) y el webhook
   exigirá firma. Un evento duplicado no volverá a aplicar comisión ni
   notificaciones.
+
+## Cola de solicitudes y disponibilidad
+
+- Un técnico está **DISPONIBLE** cuando no tiene ninguna solicitud en estado
+  activo (`aceptada`, `confirmada`, `en_camino`, `en_proceso`, `llego`) y
+  **OCUPADO** cuando atiende una. `completada`, `cancelada`, `rechazada` y
+  `expirada` nunca lo mantienen ocupado.
+- La columna histórica `tecnicos.disponible` no se usa para decidir: la
+  disponibilidad se deriva de las solicitudes reales y se refresca con Realtime
+  (y un refresco periódico en Inicio).
+- Mientras está ocupado puede recibir, aceptar o rechazar solicitudes. Aceptar
+  una nueva la deja en `en_espera` (o `confirmada_en_espera` si el cliente ya
+  confirmó); nunca se rechaza por estar ocupado.
+- Al terminar, cancelar o rechazar el servicio actual, la solicitud en espera
+  más antigua se activa en la misma transacción
+  (`activar_siguiente_solicitud`): `en_espera → aceptada` y
+  `confirmada_en_espera → confirmada`. El cliente recibe el aviso
+  “¡Ahora la solicitud actual eres tú!”.
+- La activación y las aceptaciones usan bloqueo de fila y un lock de transacción
+  por técnico (`pg_advisory_xact_lock`) para impedir dos servicios simultáneos.
+- Una solicitud en espera no puede navegar ni activar el GPS de seguimiento
+  hasta que sea su turno.
+- La vista del técnico separa **SERVICIO ACTUAL**, **SOLICITUDES EN ESPERA**
+  (en orden de aceptación) y **NUEVAS SOLICITUDES**; el historial tiene su propia
+  pestaña **SOLICITUDES TERMINADAS**.
+
+## GPS en el formulario de solicitud
+
+- El permiso se pide **solo** al tocar “USAR MI UBICACIÓN ACTUAL”; nunca al abrir
+  el formulario.
+- Se obtienen coordenadas con alta precisión y se validan sus rangos. Si la
+  precisión reportada es baja (>200 m), se avisa para revisar la dirección.
+- La geocodificación inversa usa Nominatim (OpenStreetMap) y compone la
+  dirección en español. Si falla, no se inventa una dirección: se muestra el
+  error y se mantiene la entrada manual. La UI muestra la atribución
+  “© OpenStreetMap contributors” con enlace a su copyright.
+- La dirección queda editable y se guarda junto con `latitud` y `longitud` en la
+  solicitud.
+
+## Registro e inicio de sesión
+
+- El registro pide contraseña y confirmación, cada una con icono de ojo. Se
+  valida el mínimo de 8 caracteres y que coincidan antes de crear la cuenta.
+- El inicio de sesión tiene icono de ojo. Mostrar/ocultar solo cambia el `type`
+  del input: no altera Supabase Auth ni el almacenamiento.
 
 ## Cupones
 
@@ -86,6 +132,21 @@ dejarla explícita.
   ETA numérica.
 - Al terminar/cancelar el servicio se deja de compartir automáticamente.
 
+## Identidad visual y logotipos
+
+- Los métodos habilitados usan los logotipos oficiales de Nequi, Bancolombia y
+  Daviplata, centralizados en `src/components/MetodoPagoLogo.tsx`. Los recursos
+  y sus fuentes exactas están en `docs/LOGOTIPOS_OFICIALES.md`.
+- Nequi se identifica con el icono oficial “N”; el wordmark del sitio es la
+  versión clara para fondo oscuro y no se recolorea.
+- Tarjeta, Google Pay, Bre-B y efectivo usan iconos genéricos de Material
+  Symbols (Apache 2.0). Efectivo no representa una marca externa; los demás
+  están deshabilitados y no se debe fabricar una marca ni sugerir disponibilidad.
+- No se muestra el logotipo de Google Maps: la app no usa su SDK. Los botones
+  de ruta tienen texto neutro y los enlaces externos siguen funcionando.
+- La atribución de OpenStreetMap/Nominatim es visible en el formulario de
+  dirección.
+
 ## Notificaciones y push
 
 - Preferencias por usuario; `promociones` apagado por defecto.
@@ -117,9 +178,11 @@ dejarla explícita.
 - Los archivos viven en `<tecnico_id>/<uuid>.<ext>` y las políticas comparan esa
   carpeta con el técnico autenticado. Los documentos se abren con URL firmada.
 - Los documentos son privados: solo el técnico dueño y un admin los ven.
-- Si un técnico no configuró horario, se considera disponible salvo que tenga un
-  servicio activo. Es compatible con los técnicos existentes y evita ocultarlos
-  a todos.
+- La disponibilidad se deriva de las solicitudes activas; el horario semanal
+  (`disponibilidades`) y los bloqueos por fecha (`bloqueos_agenda`) siguen
+  aplicando para la agenda. Si un técnico no configuró horario, se considera
+  disponible salvo que tenga un servicio activo. Es compatible con los técnicos
+  existentes y evita ocultarlos a todos.
 - Favoritos: un cliente puede guardar técnicos; se muestra en inicio y en el
   perfil del técnico.
 - La recomendación ordena por calidad, cercanía (barrio), disponibilidad,
@@ -145,9 +208,13 @@ dejarla explícita.
 
 ## Operación
 
-- Las migraciones nuevas **no se han ejecutado** contra el proyecto Supabase
-  enlazado; el historial remoto está vacío. Hay que aplicarlas antes de probar
-  las features en producción.
+- Las migraciones `20261109`, `20261110`, `20261111` y `20261112` ya están
+  aplicadas en el proyecto Supabase enlazado y registradas en
+  `supabase_migrations.schema_migrations`. La migración `20261111` crea la cola,
+  el GPS y Daviplata; `20261112` agrega el lock por técnico.
+- Antes de modificar la base se guardó un respaldo lógico en
+  `backups/20261111_pre_cola_gps/` (33 tablas, 558 filas) con `data/*.json`,
+  `schema.sql`, `manifest.json` y su README.
 - Las integraciones externas (Wompi, FCM) están aisladas y son opcionales: sin
   credenciales la app sigue funcionando y muestra estados “no configurado”.
 - Los tests corren sin red con `node --test` y `fetch` falso donde hace falta.

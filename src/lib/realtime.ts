@@ -24,11 +24,16 @@ type Fila = { id: number; estado: string; nombre_contacto?: string; diagnostico?
 // (p. ej. el cliente que cancela no necesita un aviso de "cancelada").
 const AVISO_CLIENTE: Record<string, string> = {
   aceptada: '✅ El técnico aceptó tu solicitud. Confirma si deseas el servicio',
+  en_espera: '⏳ El técnico aceptó tu solicitud, pero está ocupado con otro servicio. Quedó en espera y se activará cuando termine.',
+  confirmada_en_espera: '✅ Confirmaste el servicio en espera. Se activará cuando el técnico termine el servicio actual.',
   en_camino: '🛵 El técnico va en camino a tu domicilio',
   llego: '📍 El técnico llegó a tu domicilio',
   rechazada: 'Tu solicitud fue rechazada',
   completada: '🎉 El servicio terminó. Califica al técnico',
 }
+
+/** Aviso exacto cuando una solicitud en cola pasa a ser el servicio actual. */
+const TEXTO_ACTIVACION = '¡Ahora la solicitud actual eres tú! El técnico ha terminado su servicio anterior y ahora continuará con tu solicitud. Te atenderá lo más pronto posible.'
 
 const POLL_MS = 30_000 // respaldo si el canal se cae; Realtime es la vía principal
 
@@ -94,19 +99,26 @@ export function useSolicitudesEnVivo(perfil: Perfil | null) {
             if (payload.eventType === 'UPDATE' && anterior !== nueva.estado) {
               setUltimoCambio({ id: nueva.id, estado: nueva.estado, anterior: anterior ?? null, ts: Date.now() })
             }
+
+            if (rol === 'tecnico') {
+              if (payload.eventType === 'INSERT') {
+                notificar(`🔔 Nueva solicitud de ${nueva.nombre_contacto ?? 'un cliente'}`, nueva.id)
+              } else if (payload.eventType === 'UPDATE' && nueva.estado === 'cancelada' && anterior !== 'cancelada') {
+                notificar('El cliente canceló una solicitud', nueva.id)
+              } else if (payload.eventType === 'UPDATE' && nueva.estado === 'confirmada' && anterior !== 'confirmada') {
+                notificar('✅ El cliente confirmó el servicio. Ya puedes ir al domicilio', nueva.id)
+              } else if (payload.eventType === 'UPDATE' && nueva.estado === 'confirmada_en_espera' && anterior !== 'confirmada_en_espera') {
+                notificar('✅ El cliente confirmó el servicio en espera. Se activará cuando termines el actual', nueva.id)
+              }
+            } else if (payload.eventType === 'UPDATE' && anterior !== nueva.estado) {
+              const seActivo = (nueva.estado === 'aceptada' || nueva.estado === 'confirmada')
+                && (anterior === 'en_espera' || anterior === 'confirmada_en_espera')
+              const texto = seActivo ? TEXTO_ACTIVACION : AVISO_CLIENTE[nueva.estado]
+              if (texto) notificar(texto, nueva.id)
+            }
           }
 
-          if (rol === 'tecnico') {
-            if (payload.eventType === 'INSERT') {
-              notificar(`🔔 Nueva solicitud de ${nueva.nombre_contacto ?? 'un cliente'}`, nueva.id)
-            } else if (payload.eventType === 'UPDATE' && nueva.estado === 'cancelada' && previa.estado !== 'cancelada') {
-              notificar('El cliente canceló una solicitud', nueva.id)
-            } else if (payload.eventType === 'UPDATE' && nueva.estado === 'confirmada' && previa.estado !== 'confirmada') {
-              notificar('✅ El cliente confirmó el servicio. Ya puedes ir al domicilio', nueva.id)
-            }
-          } else if (payload.eventType === 'UPDATE' && previa.estado !== nueva.estado && AVISO_CLIENTE[nueva.estado]) {
-            notificar(AVISO_CLIENTE[nueva.estado], nueva.id)
-          } else if (payload.eventType === 'UPDATE' && nueva.diagnostico && previa.diagnostico !== nueva.diagnostico) {
+          if (rol !== 'tecnico' && payload.eventType === 'UPDATE' && nueva.diagnostico && previa.diagnostico !== nueva.diagnostico) {
             notificar('🩺 El técnico registró el diagnóstico de tu solicitud', nueva.id)
           }
         })

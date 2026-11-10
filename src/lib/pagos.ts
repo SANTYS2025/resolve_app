@@ -2,12 +2,17 @@
  * Métodos de pago de Resolve (lógica pura, sin React ni Supabase).
  *
  * Los identificadores coinciden EXACTAMENTE con el CHECK de
- * `solicitudes.metodo_pago` (migración 20261101).
+ * `solicitudes.metodo_pago` (migración 20261111). El catálogo mantiene los
+ * ocho métodos visibles para no romper registros históricos, pero solo cuatro
+ * están habilitados: Nequi, Bancolombia, Daviplata y efectivo.
  *
- * Etapa actual: los pagos reales con tarjeta/Google Pay están DIFERIDOS hasta
- * que Resolve tenga RUT y habilite Wompi/ePayco. Los métodos manuales
- * (efectivo, Nequi, Bancolombia, Bre-B) sí se pueden confirmar; el técnico es
- * quien registra el pago recibido. Ver docs/INTEGRACION_PAGOS.md.
+ * El pago lo confirma el técnico cuando recibe el dinero (pago manual interno).
+ * Los métodos con tarjeta, Google Pay y Bre-B quedan como "PRONTO" hasta que
+ * Resolve habilite pagos reales. Ver docs/INTEGRACION_PAGOS.md.
+ *
+ * Este módulo es lógica pura: no importa imágenes ni componentes. La capa
+ * visual elige el logotipo oficial o el icono genérico en
+ * `src/components/MetodoPagoLogo.tsx`.
  */
 
 export const METODOS_PAGO = [
@@ -16,11 +21,16 @@ export const METODOS_PAGO = [
   'google_pay',
   'nequi',
   'bancolombia',
+  'daviplata',
   'bre_b',
   'efectivo',
 ] as const
 
 export type MetodoPago = (typeof METODOS_PAGO)[number]
+
+/** Métodos que el cliente puede elegir hoy. El servidor aplica la misma lista. */
+export const METODOS_HABILITADOS = ['nequi', 'bancolombia', 'daviplata', 'efectivo'] as const
+export type MetodoPagoHabilitado = (typeof METODOS_HABILITADOS)[number]
 
 /** Estados posibles de `solicitudes.pago_estado`. */
 export const ESTADOS_PAGO = ['pendiente', 'pendiente_pasarela', 'pagado', 'efectivo', 'cancelado'] as const
@@ -28,11 +38,11 @@ export type PagoEstado = (typeof ESTADOS_PAGO)[number]
 
 export type GrupoPago = 'tarjeta' | 'billetera' | 'transferencia' | 'efectivo'
 
+/** Datos de presentación de un método. Los logotipos viven en `components/MetodoPagoLogo`. */
 export type MetodoPagoInfo = {
   id: MetodoPago
   nombre: string
   descripcion: string
-  icono: string
   grupo: GrupoPago
   /** Necesita una pasarela externa para cobrar. */
   requierePasarela: boolean
@@ -49,40 +59,36 @@ export const METODOS: MetodoPagoInfo[] = [
     id: 'tarjeta_credito',
     nombre: 'Tarjeta de crédito',
     descripcion: 'Visa, Mastercard y más',
-    icono: '💳',
     grupo: 'tarjeta',
     requierePasarela: true,
     cobroAutomatico: true,
-    instruccionCliente: 'El pago con tarjeta estará disponible cuando Resolve active pagos reales. Por ahora usa efectivo, Nequi, Bancolombia o Bre-B.',
-    instruccionTecnico: 'Pago con tarjeta de crédito (próximamente). Por ahora el cliente debe usar un método manual.',
+    instruccionCliente: 'El pago con tarjeta estará disponible pronto. Por ahora usa Nequi, Bancolombia, Daviplata o efectivo.',
+    instruccionTecnico: 'Pago con tarjeta de crédito (próximamente). El cliente debe usar Nequi, Bancolombia, Daviplata o efectivo.',
   },
   {
     id: 'tarjeta_debito',
     nombre: 'Tarjeta débito',
     descripcion: 'Débito de tu banco',
-    icono: '💳',
     grupo: 'tarjeta',
     requierePasarela: true,
     cobroAutomatico: true,
-    instruccionCliente: 'El pago con tarjeta estará disponible cuando Resolve active pagos reales. Por ahora usa efectivo, Nequi, Bancolombia o Bre-B.',
-    instruccionTecnico: 'Pago con tarjeta débito (próximamente). Por ahora el cliente debe usar un método manual.',
+    instruccionCliente: 'El pago con tarjeta estará disponible pronto. Por ahora usa Nequi, Bancolombia, Daviplata o efectivo.',
+    instruccionTecnico: 'Pago con tarjeta débito (próximamente). El cliente debe usar Nequi, Bancolombia, Daviplata o efectivo.',
   },
   {
     id: 'google_pay',
     nombre: 'Google Pay',
     descripcion: 'Paga con tu cuenta de Google',
-    icono: '🅖',
     grupo: 'billetera',
     requierePasarela: true,
     cobroAutomatico: true,
-    instruccionCliente: 'Google Pay estará disponible cuando Resolve active pagos reales. Por ahora usa efectivo, Nequi, Bancolombia o Bre-B.',
-    instruccionTecnico: 'Pago con Google Pay (próximamente). Por ahora el cliente debe usar un método manual.',
+    instruccionCliente: 'Google Pay estará disponible pronto. Por ahora usa Nequi, Bancolombia, Daviplata o efectivo.',
+    instruccionTecnico: 'Pago con Google Pay (próximamente). El cliente debe usar Nequi, Bancolombia, Daviplata o efectivo.',
   },
   {
     id: 'nequi',
     nombre: 'Nequi',
     descripcion: 'Transferencia desde tu app Nequi',
-    icono: '📱',
     grupo: 'transferencia',
     requierePasarela: false,
     cobroAutomatico: false,
@@ -93,7 +99,6 @@ export const METODOS: MetodoPagoInfo[] = [
     id: 'bancolombia',
     nombre: 'Bancolombia',
     descripcion: 'Transferencia a cuenta Bancolombia',
-    icono: '🏦',
     grupo: 'transferencia',
     requierePasarela: false,
     cobroAutomatico: false,
@@ -101,26 +106,34 @@ export const METODOS: MetodoPagoInfo[] = [
     instruccionTecnico: 'El cliente pagará por Bancolombia. Compártele tus datos por el chat y confirma cuando recibas el dinero.',
   },
   {
-    id: 'bre_b',
-    nombre: 'Bre-B',
-    descripcion: 'Transferencia inmediata',
-    icono: '⚡',
+    id: 'daviplata',
+    nombre: 'Daviplata',
+    descripcion: 'Transferencia desde tu app Daviplata',
     grupo: 'transferencia',
     requierePasarela: false,
     cobroAutomatico: false,
-    instruccionCliente: 'Pídele al técnico su llave Bre-B y transfiere al instante. Cuando pagues, avísale por el chat.',
-    instruccionTecnico: 'El cliente pagará por Bre-B. Compártele tu llave por el chat y confirma cuando recibas el dinero.',
+    instruccionCliente: 'Pídele al técnico su número de Daviplata y transfiérele directamente desde tu app. Cuando pagues, avísale por el chat.',
+    instruccionTecnico: 'El cliente pagará por Daviplata. Compártele tu número por el chat y confirma cuando recibas el dinero.',
+  },
+  {
+    id: 'bre_b',
+    nombre: 'Bre-B',
+    descripcion: 'Transferencia inmediata',
+    grupo: 'transferencia',
+    requierePasarela: false,
+    cobroAutomatico: false,
+    instruccionCliente: 'Bre-B estará disponible pronto. Por ahora usa Nequi, Bancolombia, Daviplata o efectivo.',
+    instruccionTecnico: 'Pago por Bre-B (próximamente). El cliente debe usar Nequi, Bancolombia, Daviplata o efectivo.',
   },
   {
     id: 'efectivo',
     nombre: 'Efectivo',
     descripcion: 'Paga en mano al técnico',
-    icono: '💵',
     grupo: 'efectivo',
     requierePasarela: false,
     cobroAutomatico: false,
-    instruccionCliente: 'Paga en efectivo directamente al técnico cuando termine el servicio.',
-    instruccionTecnico: 'El cliente pagará en efectivo al finalizar el servicio.',
+    instruccionCliente: 'Paga en efectivo directamente al técnico cuando termine el servicio. Cuando pagues, avísale por el chat.',
+    instruccionTecnico: 'El cliente pagará en efectivo. Confirma cuando recibas el dinero.',
   },
 ]
 
@@ -131,22 +144,29 @@ export function esMetodoPago(valor: unknown): valor is MetodoPago {
   return typeof valor === 'string' && (METODOS_PAGO as readonly string[]).includes(valor)
 }
 
+/** ¿El método se puede elegir hoy? (Nequi, Bancolombia, Daviplata o efectivo). */
+export function metodoHabilitado(metodo: string | null | undefined): boolean {
+  return !!metodo && (METODOS_HABILITADOS as readonly string[]).includes(metodo)
+}
+
 /** Datos de presentación de un método; `null` si no existe. */
 export function metodoPagoInfo(metodo: string | null | undefined): MetodoPagoInfo | null {
   return metodo ? POR_ID.get(metodo) ?? null : null
 }
 
 /**
- * Interruptor de presentación. Los pagos reales están diferidos hasta que la
+ * Interruptor de presentación. Los pagos reales siguen diferidos hasta que la
  * empresa tenga RUT; el servidor tiene su propio guard
  * (`pagos_config.pagos_reales_habilitados`). Este valor solo controla la UI.
  */
 export const PAGOS_REALES_HABILITADOS = false
 
-/** El método necesita un proveedor real que todavía no está habilitado. */
+/**
+ * El método está visible pero deshabilitado con la etiqueta PRONTO.
+ * Hoy solo Nequi, Bancolombia, Daviplata y efectivo están habilitados.
+ */
 export function metodoDiferido(metodo: string | null | undefined): boolean {
-  const info = metodoPagoInfo(metodo)
-  return !!info?.requierePasarela && !PAGOS_REALES_HABILITADOS
+  return !!metodoPagoInfo(metodo) && !metodoHabilitado(metodo)
 }
 
 /** Estado inicial de `pago_estado` al elegir un método. */
@@ -177,7 +197,7 @@ export function validarSeleccionMetodo(
   if (pagoEstado === 'pagado') return 'Este servicio ya está pagado.'
   if (pagoEstado === 'cancelado') return 'El pago de este servicio fue cancelado.'
   if (metodoDiferido(metodo)) {
-    return 'El pago con tarjeta o Google Pay estará disponible cuando Resolve active pagos reales. Usa efectivo, Nequi, Bancolombia o Bre-B.'
+    return 'Ese método de pago aún no está disponible. Por ahora usa Nequi, Bancolombia, Daviplata o efectivo.'
   }
   return null
 }
