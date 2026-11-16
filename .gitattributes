@@ -144,3 +144,8 @@
 *.stl                filter=lfs diff=lfs merge=lfs -text
 *.nc                 filter=lfs diff=lfs merge=lfs -text
 *.mat                filter=lfs diff=lfs merge=lfs -text
+
+# ---------------------------------------------------------------------------
+# Originales de marca: se guardan byte a byte, sin normalizar finales de línea
+# ---------------------------------------------------------------------------
+docs/brand/**        -text

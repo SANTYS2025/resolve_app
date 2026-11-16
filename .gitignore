@@ -13,3 +13,7 @@ logs/
 .tmp-*
 # Respaldos locales con datos de usuarios: nunca se publican.
 backups/
+# APKs: ya no se versionan. GitHub Actions los compila y los adjunta al Release
+# del tag correspondiente (ver .github/workflows/android-release.yml).
+*.apk
+apk/

@@ -69,9 +69,10 @@ Pruebas adicionales de la cola:
 
 ## APK
 
-- Ruta: `apk/ResolvePasto-debug.apk`
-- Tamaño: **5.291.187 bytes**
-- SHA-256: `C99B988882A7F04E8652D39944C41571DE3936A78C7ADF6779E1ABB64442583C`
+- El APK ya no se versiona: se publica como asset del *Release* del tag `v*`
+  (ver `README.md` → *Publicar una versión nueva*).
+- Build de referencia de este cambio (ya no está en Git): **5.291.187 bytes**,
+  SHA-256 `C99B988882A7F04E8652D39944C41571DE3936A78C7ADF6779E1ABB64442583C`.
 - Compilado con: `npm run build` → `npx cap sync android` → `gradlew assembleDebug`.
 
 ## Limitaciones

@@ -1,0 +1,82 @@
+name: Android Release
+
+# Al empujar un tag v* (por ejemplo v1.0.0) se compila la app, se corre la suite
+# completa y el APK queda adjunto al Release de ese tag. Así el APK sale de Git
+# y cada versión queda descargable desde GitHub Releases.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Compilar APK y publicar Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout (con Git LFS)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Pruebas
+        run: npm test
+
+      - name: Compilar la app web
+        run: npm run build
+
+      - name: Sincronizar Capacitor
+        run: npx cap sync android
+
+      - name: JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Configurar Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Ajustar versión al tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/versionName \".*\"/versionName \"${VERSION}\"/" android/app/build.gradle
+          if [[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            CODE=$((10#${BASH_REMATCH[1]} * 10000 + 10#${BASH_REMATCH[2]} * 100 + 10#${BASH_REMATCH[3]}))
+            sed -i "s/versionCode [0-9]\+/versionCode ${CODE}/" android/app/build.gradle
+          fi
+          grep -nE 'versionCode|versionName' android/app/build.gradle
+
+      - name: Compilar el APK
+        run: |
+          chmod +x android/gradlew
+          cd android
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Renombrar el APK con el tag
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk "ResolvePasto-${GITHUB_REF_NAME}.apk"
+          ls -lh "ResolvePasto-${GITHUB_REF_NAME}.apk"
+
+      - name: Publicar el Release con el APK
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ResolvePasto-${{ github.ref_name }}.apk
+          fail_on_unmatched_files: true
+          generate_release_notes: true

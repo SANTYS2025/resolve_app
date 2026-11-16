@@ -113,8 +113,10 @@ cd android
 ```
 Resultado: `android/app/build/outputs/apk/debug/app-debug.apk`
 
-En este proyecto ya se generó una copia lista para instalar en:
-`apk/ResolvePasto-debug.apk`.
+El APK **ya no se guarda en Git**. Las versiones publicadas se descargan desde
+los *Releases* de GitHub: <https://github.com/SANTYS2025/resolve_app/releases>.
+Se generan solas con el workflow `.github/workflows/android-release.yml` al
+empujar un tag `v*` (ver el README, sección *Publicar una versión nueva*).
 
 (Alternativa con interfaz: `npx cap open android` → en Android Studio, menú **Build → Build Bundle(s) / APK(s) → Build APK(s)**.)
 

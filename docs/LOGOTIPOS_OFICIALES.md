@@ -79,10 +79,14 @@ El mapeo vive en `src/components/MetodoPagoLogo.tsx`; los iconos en
 
 ## Entrega del APK
 
-- Archivo: `apk/ResolvePasto-debug.apk`
-- Tamaño: **5.291.187 bytes** (≈ 5,05 MiB). Incremento frente al APK anterior:
-  **5.501 bytes**, por los dos SVG y el PNG embebido.
-- SHA-256: `C99B988882A7F04E8652D39944C41571DE3936A78C7ADF6779E1ABB64442583C`
+- El APK **ya no se versiona en el repositorio**. Cada versión se publica como
+  asset del *Release* de GitHub del tag `v*` correspondiente; el workflow
+  `.github/workflows/android-release.yml` lo compila y lo adjunta (ver el README).
+- Registro del build de referencia de este cambio, conservado como trazabilidad
+  (ese archivo ya no está en Git):
+  - Tamaño: **5.291.187 bytes** (≈ 5,05 MiB). Incremento frente al APK anterior:
+    **5.501 bytes**, por los dos SVG y el PNG embebido.
+  - SHA-256: `C99B988882A7F04E8652D39944C41571DE3936A78C7ADF6779E1ABB64442583C`
 - Contenido comprobado dentro del APK:
   `assets/public/assets/bancolombia-C9aOz93v.svg`,
   `assets/public/assets/daviplata-CTcIF8eX.svg` y el PNG de Nequi embebido en
