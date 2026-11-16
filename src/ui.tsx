@@ -206,9 +206,12 @@ export class Boundary extends Component<{ children: ReactNode }, { err: boolean 
     if (!this.state.err) return this.props.children
     return (
       <div className="h-full flex flex-col items-center justify-center gap-3 px-6 text-center" style={{ backgroundColor: BG }}>
-        <p className="text-sm font-bold" style={{ color: N }}>Algo salió mal.</p>
+        <p className="text-sm font-bold" style={{ color: N }}>No pudimos mostrar esta pantalla.</p>
+        <p className="text-xs leading-relaxed max-w-[280px]" style={{ color: MU }}>
+          Vuelve a cargar la app. Tus solicitudes y mensajes siguen guardados.
+        </p>
         <button onClick={() => window.location.reload()} className="px-5 py-2.5 rounded-2xl text-xs font-extrabold" style={{ background: PRIMARY, color: N }}>
-          Recargar
+          Recargar la app
         </button>
       </div>
     )

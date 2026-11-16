@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import {
   ESTADOS_ACTIVOS_TECNICO, accionDelTecnico, clientePuedeCancelar, confirmadaEnEspera,
   disponibilidadTecnico, enHistorial, esEnEspera, esFinalizada, esperaConfirmacionCliente,
-  estaVigente, filtrarSolicitudes, llegadaRegistrada, ordenarEnEspera,
+  estaVigente, estadoTecnico, filtrarSolicitudes, llegadaRegistrada, normalizarEstadoTecnico,
+  ordenarEnEspera,
   puedeAceptarSolicitud, puedeFinalizarSolicitud, progresoCliente,
 } from '../src/lib/solicitudes.ts'
 
@@ -162,3 +163,35 @@ test('el cliente puede cancelar antes de que el técnico salga, incluso en esper
     assert.equal(clientePuedeCancelar(estado), false, estado)
   }
 })
+
+test('estado del técnico: el servicio activo manda sobre la presencia', () => {
+  // Al iniciar sesión, sin servicio y recibiendo: disponible.
+  assert.equal(estadoTecnico({ presente: true, recibiendoSolicitudes: true, servicioActivo: false }), 'disponible')
+
+  // Acepta un servicio: ocupado, aunque siga conectado.
+  assert.equal(estadoTecnico({ presente: true, recibiendoSolicitudes: true, servicioActivo: true }), 'ocupado')
+
+  // Termina y sigue recibiendo: vuelve a disponible.
+  assert.equal(estadoTecnico({ presente: true, recibiendoSolicitudes: true, servicioActivo: false }), 'disponible')
+
+  // Termina, pero había apagado el interruptor: queda pausado.
+  assert.equal(estadoTecnico({ presente: true, recibiendoSolicitudes: false, servicioActivo: false }), 'pausado')
+
+  // Cierra la app estando libre: deja de estar disponible.
+  assert.equal(estadoTecnico({ presente: false, recibiendoSolicitudes: true, servicioActivo: false }), 'desconectado')
+
+  // Si se cae la conexión en pleno servicio, sigue ocupado (el cliente cuenta con él).
+  assert.equal(estadoTecnico({ presente: false, recibiendoSolicitudes: true, servicioActivo: true }), 'ocupado')
+})
+
+test('un valor desconocido de la vista nunca se muestra como disponible', () => {
+  assert.equal(normalizarEstadoTecnico('disponible'), 'disponible')
+  assert.equal(normalizarEstadoTecnico('ocupado'), 'ocupado')
+  assert.equal(normalizarEstadoTecnico('pausado'), 'pausado')
+  assert.equal(normalizarEstadoTecnico('desconectado'), 'desconectado')
+  assert.equal(normalizarEstadoTecnico(''), 'desconectado')
+  assert.equal(normalizarEstadoTecnico(null), 'desconectado')
+  assert.equal(normalizarEstadoTecnico(undefined), 'desconectado')
+  assert.equal(normalizarEstadoTecnico('DISPONIBLE'), 'desconectado')
+})
+

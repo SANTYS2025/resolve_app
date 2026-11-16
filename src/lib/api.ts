@@ -3,9 +3,8 @@ import type { User } from '@supabase/supabase-js'
 import { supabase } from './supabase'
 import { ESTADOS_PAGO, esMetodoPago, estadoPagoInicial } from './pagos'
 import type { MetodoPago, PagoEstado } from './pagos'
-import { estaDisponibleAhora, fechaLocal } from './disponibilidad'
-import type { Bloqueo, Franja } from './disponibilidad'
-import { ESTADOS_ACTIVOS_TECNICO } from './solicitudes'
+import { normalizarEstadoTecnico } from './solicitudes'
+import type { EstadoTecnico } from './solicitudes'
 
 /* ───────── Tipos ───────── */
 export type Rol = 'cliente' | 'tecnico' | 'admin'
@@ -21,8 +20,12 @@ export type WorkerType = {
   rating: number; reviews: number; priceMin: number; priceMax: number
   years: number; jobs: number; avatar: string; verified: boolean
   genero: Genero // define la foto por defecto cuando el técnico no subió una
-  /** Está dentro de su horario, sin bloqueo hoy y sin un servicio activo. */
+  /** Puede recibir solicitudes ahora mismo (conectado, recibiendo y sin servicio). */
   disponibleAhora: boolean
+  /** Estado completo: disponible · ocupado · pausado · desconectado. */
+  estado: EstadoTecnico
+  presente: boolean
+  recibiendoSolicitudes: boolean
 }
 
 /** Calificación de 1 a 5 con las tres preguntas de comportamiento. */
@@ -227,61 +230,150 @@ type TecnicoRow = {
   foto_url: string | null; verificado: boolean; categoria_id: number | null
   categoria: string | null; barrio: string | null
   rating: number | string; resenas: number; trabajos: number
+  /** Campos de la migración 20261113; si aún no se aplicó llegan undefined. */
+  estado_disponibilidad?: string | null
+  disponible_ahora?: boolean | null
+  presente?: boolean | null
+  recibiendo_solicitudes?: boolean | null
+  ocupado?: boolean | null
 }
 
-export async function getTecnicos(): Promise<WorkerType[]> {
-  const { data, error } = await supabase
-    .from('tecnicos_publicos').select('*')
-    .eq('verificado', true) // solo técnicos aprobados
-    .order('rating', { ascending: false }).order('resenas', { ascending: false }).limit(100)
-  if (error) throw error
+/** Descarta URLs de ejemplo o inválidas: mejor la foto por defecto que una imagen rota. */
+function urlFoto(valor: string | null | undefined): string {
+  const url = (valor ?? '').trim()
+  if (!url || /example\.invalid/i.test(url)) return ''
+  return /^https?:\/\//i.test(url) ? url : ''
+}
 
-  // Género por técnico (vista tecnicos_genero de la migración). Si no existe aún, se deduce del nombre.
+function mapearTecnico(t: TecnicoRow, genero: Genero): WorkerType {
+  const estado: EstadoTecnico = t.estado_disponibilidad
+    ? normalizarEstadoTecnico(t.estado_disponibilidad)
+    // Respaldo mientras la migración no esté aplicada.
+    : (t.ocupado ? 'ocupado' : 'disponible')
+  return {
+    id: t.id, name: t.nombre_publico, trade: limpiarEtiqueta(t.especialidad), description: t.descripcion ?? '',
+    category: limpiarEtiqueta(t.categoria), categoryId: t.categoria_id,
+    genero, neighborhood: t.barrio ?? '',
+    rating: Number(t.rating), reviews: t.resenas,
+    priceMin: Number(t.precio_min), priceMax: Number(t.precio_max),
+    years: t.anios_experiencia, jobs: t.trabajos, avatar: urlFoto(t.foto_url), verified: t.verificado,
+    estado,
+    presente: typeof t.presente === 'boolean' ? t.presente : estado !== 'desconectado',
+    recibiendoSolicitudes: typeof t.recibiendo_solicitudes === 'boolean' ? t.recibiendo_solicitudes : true,
+    disponibleAhora: typeof t.disponible_ahora === 'boolean' ? t.disponible_ahora : estado === 'disponible',
+  }
+}
+
+async function generosPorTecnico(): Promise<Map<number, Genero>> {
   const generos = new Map<number, Genero>()
   const g = await supabase.from('tecnicos_genero').select('id,genero')
-  if (!g.error) for (const r of (g.data ?? []) as { id: number; genero: string | null }[]) if (r.genero === 'hombre' || r.genero === 'mujer') generos.set(r.id, r.genero)
-
-  /*
-   * Disponibilidad "ahora": horario semanal + bloqueos de hoy + servicio activo.
-   * Si el técnico aún no configuró horario, no se oculta: se considera
-   * disponible salvo que tenga un servicio en curso (decisión compatible con
-   * los técnicos existentes, que no tenían agenda).
-   */
-  const [disp, bloqueos, activas] = await Promise.all([
-    supabase.from('disponibilidades').select('tecnico_id,dia_semana,hora_inicio,hora_fin').eq('activo', true),
-    supabase.from('bloqueos_agenda').select('tecnico_id,fecha').eq('fecha', fechaLocal()),
-    supabase.from('solicitudes').select('tecnico_id').in('estado', [...ESTADOS_ACTIVOS_TECNICO]).not('tecnico_id', 'is', null),
-  ])
-
-  const franjasPorTecnico = new Map<number, Franja[]>()
-  for (const f of (disp.error ? [] : (disp.data ?? [])) as { tecnico_id: number; dia_semana: number; hora_inicio: string; hora_fin: string }[]) {
-    const lista = franjasPorTecnico.get(f.tecnico_id) ?? []
-    lista.push({ dia_semana: f.dia_semana, hora_inicio: f.hora_inicio, hora_fin: f.hora_fin })
-    franjasPorTecnico.set(f.tecnico_id, lista)
-  }
-  const bloqueados = new Set<number>(
-    (bloqueos.error ? [] : (bloqueos.data ?? [])).map(b => Number((b as { tecnico_id: number }).tecnico_id)),
-  )
-  const ocupados = new Set<number>(
-    (activas.error ? [] : (activas.data ?? [])).map(s => Number((s as { tecnico_id: number }).tecnico_id)),
-  )
-  const ahora = new Date()
-
-  return ((data ?? []) as TecnicoRow[]).map(t => {
-    const franjas = franjasPorTecnico.get(t.id) ?? []
-    const bloqueoHoy: Bloqueo[] = bloqueados.has(t.id) ? [{ fecha: fechaLocal(ahora) }] : []
-    const enHorario = franjas.length === 0 ? !bloqueados.has(t.id) : estaDisponibleAhora(franjas, ahora, bloqueoHoy)
-    return {
-      id: t.id, name: t.nombre_publico, trade: limpiarEtiqueta(t.especialidad), description: t.descripcion ?? '',
-      category: limpiarEtiqueta(t.categoria), categoryId: t.categoria_id,
-      genero: generos.get(t.id) ?? inferirGenero(t.nombre_publico), neighborhood: t.barrio ?? '',
-      rating: Number(t.rating), reviews: t.resenas,
-      priceMin: Number(t.precio_min), priceMax: Number(t.precio_max),
-      years: t.anios_experiencia, jobs: t.trabajos, avatar: t.foto_url ?? '', verified: t.verificado,
-      disponibleAhora: enHorario && !ocupados.has(t.id),
+  if (!g.error) {
+    for (const r of (g.data ?? []) as { id: number; genero: string | null }[]) {
+      if (r.genero === 'hombre' || r.genero === 'mujer') generos.set(r.id, r.genero)
     }
-  })
+  }
+  return generos
 }
+
+/**
+ * Catálogo de técnicos con la disponibilidad que calcula el servidor.
+ *
+ * Antes se combinaban horario semanal, bloqueos y solicitudes activas en el
+ * cliente. Eso fallaba en ambos sentidos: el horario ocultaba técnicos libres y
+ * las RLS impedían ver los servicios activos de otros técnicos. Ahora la vista
+ * `tecnicos_publicos` devuelve `estado_disponibilidad` y `disponible_ahora`.
+ */
+export async function getTecnicos(): Promise<WorkerType[]> {
+  const [{ data, error }, generos] = await Promise.all([
+    supabase.from('tecnicos_publicos').select('*')
+      .eq('verificado', true) // solo técnicos aprobados
+      .order('rating', { ascending: false }).order('resenas', { ascending: false }).limit(100),
+    generosPorTecnico(),
+  ])
+  if (error) throw error
+  return ((data ?? []) as TecnicoRow[]).map(t =>
+    mapearTecnico(t, generos.get(t.id) ?? inferirGenero(t.nombre_publico)))
+}
+
+/** Ficha pública de un técnico: refresca el perfil abierto sin recargar la pantalla. */
+export async function getTecnicoPublico(id: number): Promise<WorkerType | null> {
+  const [{ data, error }, generos] = await Promise.all([
+    supabase.from('tecnicos_publicos').select('*').eq('id', id).maybeSingle(),
+    generosPorTecnico(),
+  ])
+  if (error) throw error
+  if (!data) return null
+  const fila = data as TecnicoRow
+  return mapearTecnico(fila, generos.get(id) ?? inferirGenero(fila.nombre_publico))
+}
+
+/* ───────── Disponibilidad del técnico (migración 20261113) ───────── */
+export type MiEstadoTecnico = {
+  tecnicoId: number
+  recibiendoSolicitudes: boolean
+  presente: boolean
+  estado: EstadoTecnico
+  solicitudActiva: number | null
+}
+
+type MiEstadoRow = {
+  tecnico_id: number; recibiendo_solicitudes: boolean; presente: boolean
+  estado_disponibilidad: string; solicitud_activa: number | null
+}
+
+/** La migración aún no está aplicada: la app sigue funcionando sin presencia. */
+function esMigracionPendiente(e: unknown): boolean {
+  const obj = e && typeof e === 'object' ? e as { message?: unknown; code?: unknown } : {}
+  const mensaje = String(obj.message ?? '')
+  return obj.code === 'PGRST202' || obj.code === '42883'
+    || /could not find the function|function .* does not exist|schema cache/i.test(mensaje)
+}
+
+export async function getMiEstadoTecnico(): Promise<MiEstadoTecnico | null> {
+  const { data, error } = await supabase.rpc('mi_estado_tecnico')
+  if (error) {
+    if (esMigracionPendiente(error)) return null
+    throw error
+  }
+  const fila = (Array.isArray(data) ? data[0] : data) as MiEstadoRow | undefined
+  if (!fila) return null
+  return {
+    tecnicoId: Number(fila.tecnico_id),
+    recibiendoSolicitudes: fila.recibiendo_solicitudes !== false,
+    presente: fila.presente === true,
+    estado: normalizarEstadoTecnico(fila.estado_disponibilidad),
+    solicitudActiva: fila.solicitud_activa == null ? null : Number(fila.solicitud_activa),
+  }
+}
+
+export async function marcarPresenciaTecnico(): Promise<void> {
+  const { error } = await supabase.rpc('marcar_presencia_tecnico')
+  if (error && !esMigracionPendiente(error)) throw error
+}
+
+export async function marcarDesconexionTecnico(): Promise<void> {
+  const { error } = await supabase.rpc('marcar_desconexion_tecnico')
+  if (error && !esMigracionPendiente(error)) throw error
+}
+
+export async function alternarRecibirSolicitudes(activo: boolean): Promise<boolean> {
+  const { data, error } = await supabase.rpc('alternar_recibir_solicitudes', { p_activo: activo })
+  if (error) throw error
+  return typeof data === 'boolean' ? data : activo
+}
+
+/** Foto propia del técnico (avatar del perfil). */
+export async function getMiFotoTecnico(usuarioId: string): Promise<string | null> {
+  const { data, error } = await supabase.from('tecnicos').select('foto_url').eq('usuario_id', usuarioId).order('id').limit(1)
+  if (error) throw error
+  return urlFoto((data?.[0] as { foto_url: string | null } | undefined)?.foto_url) || null
+}
+
+export async function guardarFotoTecnico(url: string): Promise<void> {
+  const { error } = await supabase.rpc('guardar_foto_tecnico', { p_url: url })
+  if (error) throw error
+}
+
 
 export async function getTotalTecnicos(): Promise<number> {
   const { count, error } = await supabase.from('tecnicos_publicos').select('id', { count: 'exact', head: true }).eq('verificado', true)

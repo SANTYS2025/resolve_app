@@ -100,6 +100,36 @@ export type DisponibilidadTecnico<T> =
   | { estado: 'ocupado'; solicitud: T }
 
 /**
+ * Estado real del técnico tal como lo calcula el servidor (migración 20261113).
+ *
+ * Prioridades:
+ *  1. Un servicio activo siempre lo deja `ocupado` (aunque la app se haya cerrado:
+ *     el cliente sigue contando con él).
+ *  2. Sin latido reciente de la app → `desconectado` (no está disponible).
+ *  3. Conectado pero con el interruptor apagado → `pausado`.
+ *  4. Conectado, recibiendo y sin servicio → `disponible`.
+ */
+export type EstadoTecnico = 'disponible' | 'ocupado' | 'pausado' | 'desconectado'
+
+export function estadoTecnico(p: {
+  presente: boolean
+  recibiendoSolicitudes: boolean
+  servicioActivo: boolean
+}): EstadoTecnico {
+  if (p.servicioActivo) return 'ocupado'
+  if (!p.presente) return 'desconectado'
+  if (!p.recibiendoSolicitudes) return 'pausado'
+  return 'disponible'
+}
+
+/** Normaliza el texto que llega de la vista; cualquier valor raro cae en `desconectado`. */
+export function normalizarEstadoTecnico(valor: unknown): EstadoTecnico {
+  return valor === 'disponible' || valor === 'ocupado' || valor === 'pausado' || valor === 'desconectado'
+    ? valor
+    : 'desconectado'
+}
+
+/**
  * Disponibilidad derivada de la base de datos, sin una columna extra que pueda
  * quedar desactualizada: si no hay ninguna solicitud aceptada/en curso, el
  * técnico está Disponible; si hay una, está Ocupado en ESA solicitud.

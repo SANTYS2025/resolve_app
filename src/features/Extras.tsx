@@ -25,6 +25,7 @@ import { resumenGanancias, resumenGastos } from '../lib/ganancias'
 import type { TransaccionResumen } from '../lib/ganancias'
 import { metodoPagoInfo } from '../lib/pagos'
 import { IconoMaterial } from '../components/IconoMaterial'
+import type { IconoMaterialNombre } from '../components/IconoMaterial'
 import { MetodoPagoLogo } from '../components/MetodoPagoLogo'
 import { etiquetaEta, urlUbicacionTecnico } from '../lib/geo'
 import type { Punto } from '../lib/geo'
@@ -139,6 +140,13 @@ function Toggle({ on, onChange, label, description }: { on: boolean; onChange: (
 }
 
 /* ═════════ Centro de ayuda y soporte ═════════ */
+const ICONO_CATEGORIA: Record<CategoriaTicket, IconoMaterialNombre> = {
+  pago: 'payments',
+  servicio: 'build',
+  cuenta: 'person',
+  tecnico: 'support_agent',
+  otro: 'chat_bubble',
+}
 export function HelpScreen({ go, perfil, solicitudId }: { go: (s: 'profile') => void; perfil: Perfil; solicitudId?: number | null }) {
   const [q, setQ] = useState('')
   const [cat, setCat] = useState<CategoriaTicket | null>(null)
@@ -177,8 +185,10 @@ export function HelpScreen({ go, perfil, solicitudId }: { go: (s: 'profile') => 
           <button onClick={() => setCat(null)} className="min-h-[40px] px-3 rounded-full text-xs font-bold"
             style={{ backgroundColor: cat === null ? N : GL, color: cat === null ? W : N, border: `1px solid ${BD}` }}>Todo</button>
           {CATEGORIAS_TICKET.map(c => (
-            <button key={c.id} onClick={() => setCat(c.id)} className="min-h-[40px] px-3 rounded-full text-xs font-bold"
-              style={{ backgroundColor: cat === c.id ? N : GL, color: cat === c.id ? W : N, border: `1px solid ${BD}` }}>{c.icono} {c.nombre}</button>
+            <button key={c.id} onClick={() => setCat(c.id)} className="min-h-[40px] px-3 rounded-full text-xs font-bold inline-flex items-center gap-1.5"
+              style={{ backgroundColor: cat === c.id ? N : GL, color: cat === c.id ? W : N, border: `1px solid ${BD}` }}>
+              <IconoMaterial name={ICONO_CATEGORIA[c.id]} size={14} /> {c.nombre}
+            </button>
           ))}
         </div>
 
@@ -1058,8 +1068,8 @@ export function ReportarProblemaBox({ pedido }: { pedido: Pedido }) {
 
   return (
     <div className="mt-3 rounded-2xl p-3.5" style={{ backgroundColor: '#FFF7ED', border: '1px solid #FED7AA' }}>
-      <button onClick={() => setAbierto(!abierto)} className="w-full text-left text-xs font-extrabold uppercase tracking-wider" style={{ color: '#9A3412' }}>
-        ⚠️ Reportar un problema {abierto ? '▴' : '▾'}
+      <button onClick={() => setAbierto(!abierto)} className="w-full text-left text-xs font-extrabold uppercase tracking-wider inline-flex items-center gap-1.5" style={{ color: '#9A3412' }}>
+        <IconoMaterial name="warning" size={13} /> Reportar un problema {abierto ? '▴' : '▾'}
       </button>
       {abierto && (
         <div className="mt-3 space-y-2">
@@ -1103,8 +1113,8 @@ export function CuponBox({ pedido, onApplied }: { pedido: Pedido; onApplied: () 
   if ((pedido.descuentoCentavos ?? 0) > 0) {
     return (
       <div className="mt-3 rounded-2xl px-3.5 py-3" style={{ backgroundColor: GL, border: `1px solid ${G}50` }}>
-        <p className="text-xs font-extrabold" style={{ color: '#065F46' }}>
-          ✓ Cupón aplicado{pedido.cuponCodigo ? `: ${pedido.cuponCodigo}` : ''}
+        <p className="text-xs font-extrabold inline-flex items-center gap-1.5" style={{ color: '#065F46' }}>
+          <IconoMaterial name="check_circle" size={13} /> Cupón aplicado{pedido.cuponCodigo ? `: ${pedido.cuponCodigo}` : ''}
         </p>
         <p className="text-xs mt-0.5" style={{ color: MU }}>
           Descuento de {cop(pedido.descuentoCentavos)} sobre {cop(totalCentavos)}. Se cobrará {cop(Math.max(0, totalCentavos - pedido.descuentoCentavos))}.
@@ -1129,7 +1139,9 @@ export function CuponBox({ pedido, onApplied }: { pedido: Pedido; onApplied: () 
 
   return (
     <div className="mt-3 rounded-2xl p-3.5" style={{ backgroundColor: W, border: `1px solid ${BD}` }}>
-      <div className="text-xs font-extrabold uppercase tracking-wider mb-2" style={{ color: N }}>🎟️ Cupón de descuento</div>
+      <div className="text-xs font-extrabold uppercase tracking-wider mb-2 inline-flex items-center gap-1.5" style={{ color: N }}>
+        <IconoMaterial name="local_activity" size={14} /> Cupón de descuento
+      </div>
       <div className="flex gap-2">
         <input value={codigo} onChange={e => setCodigo(e.target.value.toUpperCase().replace(/\s/g, ''))} placeholder="CÓDIGO" className={INPUT} style={INPUT_STYLE} />
         <button onClick={aplicar} disabled={busy} className="min-h-[48px] px-4 rounded-2xl text-xs font-extrabold flex-shrink-0" style={{ backgroundColor: G, color: N, opacity: busy ? 0.6 : 1 }}>
@@ -1164,8 +1176,8 @@ export function FavoriteButton({ tecnicoId, onChange }: { tecnicoId: number; onC
   return (
     <span className="inline-flex flex-col items-end">
       <button onClick={alternar} disabled={busy} aria-pressed={fav === true} aria-label={fav ? 'Quitar de favoritos' : 'Guardar en favoritos'}
-        className="min-h-[36px] px-2 text-base leading-none" style={{ color: fav ? '#EAB308' : '#9CA3AF' }}>
-        {fav ? '★' : '☆'}
+        className="min-h-[36px] px-2 leading-none" style={{ color: fav ? '#EAB308' : '#9CA3AF' }}>
+        <IconoMaterial name={fav ? 'star_lleno' : 'star'} size={18} />
       </button>
       {msg && <span className="text-[10px] text-red-600 max-w-[120px]">{msg}</span>}
     </span>
@@ -1198,7 +1210,7 @@ export function ResetPasswordScreen({ onDone }: { onDone: () => void }) {
       <div className="flex flex-col h-full px-5 pt-8" style={{ backgroundColor: BG }}>
         <div className="flex-1 flex flex-col items-center justify-center text-center">
           <div className="w-20 h-20 rounded-full flex items-center justify-center mb-4" style={{ backgroundColor: GL }}>
-            <span className="text-3xl">✓</span>
+            <span style={{ color: GD }}><IconoMaterial name="check_circle" size={44} /></span>
           </div>
           <h2 className="text-2xl font-extrabold mb-2" style={{ color: N }}>Contraseña actualizada</h2>
           <p className="text-sm" style={{ color: MU }}>Ya puedes entrar con tu nueva contraseña.</p>

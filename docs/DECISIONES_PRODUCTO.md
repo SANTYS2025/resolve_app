@@ -48,13 +48,34 @@ dejarla explícita.
 
 ## Cola de solicitudes y disponibilidad
 
-- Un técnico está **DISPONIBLE** cuando no tiene ninguna solicitud en estado
-  activo (`aceptada`, `confirmada`, `en_camino`, `en_proceso`, `llego`) y
-  **OCUPADO** cuando atiende una. `completada`, `cancelada`, `rechazada` y
-  `expirada` nunca lo mantienen ocupado.
-- La columna histórica `tecnicos.disponible` no se usa para decidir: la
-  disponibilidad se deriva de las solicitudes reales y se refresca con Realtime
-  (y un refresco periódico en Inicio).
+- El **servidor es la única autoridad** de la disponibilidad (migración
+  `20261113`). El cliente no deduce estados a partir del horario semanal ni de
+  columnas que puedan quedar viejas.
+- Un técnico está **OCUPADO** cuando tiene una solicitud en estado activo
+  (`aceptada`, `confirmada`, `en_camino`, `llego`, `en_proceso`, `en_curso`).
+  `completada`, `cancelada`, `rechazada` y `expirada` nunca lo mantienen ocupado.
+  El servicio activo manda sobre cualquier otro estado.
+- **Presencia:** la app abierta envía un latido cada 60 s
+  (`marcar_presencia_tecnico`). Sin latido durante **4 minutos** el técnico pasa a
+  `desconectado` (cierre forzado, batería o pérdida de red). Logout y salida de la
+  app llaman a `marcar_desconexion_tecnico` para reflejarlo al instante.
+- **Interruptor manual** “Recibir solicitudes” (`alternar_recibir_solicitudes`):
+  conectado con el interruptor apagado = `pausado`; conectado y activo sin
+  servicio = `disponible`. Cuatro estados en el servidor, tres visibles para el
+  cliente: `pausado` y `desconectado` se muestran como **No disponible**.
+- El horario semanal (`disponibilidades`) y los bloqueos por fecha
+  (`bloqueos_agenda`) son **informativos para la agenda**: ya no ocultan técnicos
+  libres del catálogo.
+- La vista `tecnicos_publicos` calcula `estado_disponibilidad`,
+  `disponible_ahora`, `ocupado`, `presente` y `recibiendo_solicitudes`, así todos
+  los dispositivos ven lo mismo. La tabla `tecnico_estado` (lectura pública) es
+  la fuente de presencia e interruptor; los latidos normales **no** cambian
+  `actualizado_en` para no inundar Realtime.
+- Realtime escucha `tecnico_estado` y descarta eventos con el mismo
+  `actualizado_en`; un trigger toca la fila solo cuando un servicio activo
+  empieza o termina (o cambia de técnico). Así aceptar y finalizar se ven al
+  instante en los demás dispositivos y en el propio. El sondeo de la lista cada
+  30 s queda como respaldo si el canal se cae.
 - Mientras está ocupado puede recibir, aceptar o rechazar solicitudes. Aceptar
   una nueva la deja en `en_espera` (o `confirmada_en_espera` si el cliente ya
   confirmó); nunca se rechaza por estar ocupado.
@@ -70,6 +91,9 @@ dejarla explícita.
 - La vista del técnico separa **SERVICIO ACTUAL**, **SOLICITUDES EN ESPERA**
   (en orden de aceptación) y **NUEVAS SOLICITUDES**; el historial tiene su propia
   pestaña **SOLICITUDES TERMINADAS**.
+- Si el técnico está ocupado, el cliente puede enviar la solicitud: queda en
+  espera. Si está pausado o desconectado, el diálogo lo dice y la solicitud
+  queda pendiente hasta que vuelva. Nunca se bloquea al cliente.
 
 ## GPS en el formulario de solicitud
 
@@ -170,19 +194,23 @@ dejarla explícita.
 
 ## Técnicos
 
-- La disponibilidad mantiene el modelo semanal existente
-  (`disponibilidades`) y añade **bloqueos por fecha** (`bloqueos_agenda`).
+- El horario semanal (`disponibilidades`) y los bloqueos por fecha
+  (`bloqueos_agenda`) son **informativos**: ordenan la agenda y las franjas que
+  el técnico ofrece, ya no toman la decisión de quién aparece disponible. La
+  regla de disponibilidad vive en la sección «Cola de solicitudes y
+  disponibilidad».
 - Portafolio y documentos se suben a **Supabase Storage**, con el enlace manual
   conservado como alternativa. Buckets: `portafolio-tecnicos` (público) y
   `documentos-tecnicos` (privado).
 - Los archivos viven en `<tecnico_id>/<uuid>.<ext>` y las políticas comparan esa
   carpeta con el técnico autenticado. Los documentos se abren con URL firmada.
 - Los documentos son privados: solo el técnico dueño y un admin los ven.
-- La disponibilidad se deriva de las solicitudes activas; el horario semanal
-  (`disponibilidades`) y los bloqueos por fecha (`bloqueos_agenda`) siguen
-  aplicando para la agenda. Si un técnico no configuró horario, se considera
-  disponible salvo que tenga un servicio activo. Es compatible con los técnicos
-  existentes y evita ocultarlos a todos.
+- Avatares de técnicos: bucket `avatares-tecnicos` (público), ruta fija
+  `<tecnico_id>/avatar.jpg`, upsert. La app redimensiona a **512×512** con
+  recorte centrado y recomprime a JPEG antes de subir (se corrige la orientación
+  EXIF). La URL guardada lleva `?v=<timestamp>` para invalidar la caché del CDN y
+  del WebView. La foto por defecto se elige por género guardado en su ficha
+  (`tecnicos_genero`), no por una foto genérica de plantilla.
 - Favoritos: un cliente puede guardar técnicos; se muestra en inicio y en el
   perfil del técnico.
 - La recomendación ordena por calidad, cercanía (barrio), disponibilidad,
@@ -212,6 +240,11 @@ dejarla explícita.
   aplicadas en el proyecto Supabase enlazado y registradas en
   `supabase_migrations.schema_migrations`. La migración `20261111` crea la cola,
   el GPS y Daviplata; `20261112` agrega el lock por técnico.
+- La migración `20261113_avatares_disponibilidad.sql` (disponibilidad con
+  presencia, `tecnico_estado`, Realtime de presencia, bucket de avatares y
+  limpieza de URLs de ejemplo) **está pendiente de aplicar**; hasta ejecutarla en
+  el SQL Editor, la app funciona por su respaldo local y la disponibilidad
+  completa no está activa. Es idempotente.
 - Antes de modificar la base se guardó un respaldo lógico en
   `backups/20261111_pre_cola_gps/` (33 tablas, 558 filas) con `data/*.json`,
   `schema.sql`, `manifest.json` y su README.

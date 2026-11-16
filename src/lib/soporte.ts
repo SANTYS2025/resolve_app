@@ -8,12 +8,12 @@ export type CategoriaTicket = 'pago' | 'servicio' | 'cuenta' | 'tecnico' | 'otro
 
 export type Faq = { id: string; categoria: CategoriaTicket; pregunta: string; respuesta: string }
 
-export const CATEGORIAS_TICKET: { id: CategoriaTicket; nombre: string; icono: string }[] = [
-  { id: 'pago', nombre: 'Pagos y reembolsos', icono: '💳' },
-  { id: 'servicio', nombre: 'Problema con un servicio', icono: '🔧' },
-  { id: 'cuenta', nombre: 'Mi cuenta', icono: '👤' },
-  { id: 'tecnico', nombre: 'Ser técnico', icono: '🛠️' },
-  { id: 'otro', nombre: 'Otro', icono: '💬' },
+export const CATEGORIAS_TICKET: { id: CategoriaTicket; nombre: string }[] = [
+  { id: 'pago', nombre: 'Pagos y reembolsos' },
+  { id: 'servicio', nombre: 'Problema con un servicio' },
+  { id: 'cuenta', nombre: 'Mi cuenta' },
+  { id: 'tecnico', nombre: 'Ser técnico' },
+  { id: 'otro', nombre: 'Otro' },
 ]
 
 export const FAQ: Faq[] = [

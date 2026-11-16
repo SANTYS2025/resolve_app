@@ -11,12 +11,13 @@ import logo from './imports/logo-limpio.png'
 import avatarHombre from './imports/avatar-hombre.png'
 import avatarMujer from './imports/avatar-mujer.png'
 import { IconoMaterial } from './components/IconoMaterial'
+import type { IconoMaterialNombre } from './components/IconoMaterial'
 import { MetodoPagoLogo } from './components/MetodoPagoLogo'
 import { supabase } from './lib/supabase'
 import {
   aceptarSolicitud, calificarSolicitud, cambiarEstado, completarSolicitud, confirmarTecnico, crearSolicitud, ensurePerfil, enviarMensaje, errMsg, fmt, getBarrios, getCategorias, getEstadoSolicitud,
-  getHistorial, getDisponibilidades, getEstadoAprobacion, getMiCuentaBancaria, getMiTecnicoId, getMiVerificacion, getPedidos, getTecnicos,
-  esCorreo, guardarCuentaBancaria, guardarDiagnostico, guardarGenero, iniciarDesplazamiento, marcarLlegada, normCel, registrarMetodoPago, registrarTecnico,
+  getHistorial, getDisponibilidades, getEstadoAprobacion, getMiCuentaBancaria, getMiFotoTecnico, getMiTecnicoId, getMiVerificacion, getPedidos, getTecnicos, getTecnicoPublico,
+  esCorreo, guardarCuentaBancaria, guardarDiagnostico, guardarGenero, inferirGenero, iniciarDesplazamiento, marcarLlegada, normCel, registrarMetodoPago, registrarTecnico,
   soloDigitos, soloDireccion, soloNombre, urlGoogleMaps, useData,
 } from './lib/api'
 import type { Barrio, Categoria, CuentaBancaria, Disponibilidad, Genero, Pedido, Perfil, Rol, SolicitudEvento, WorkerType } from './lib/api'
@@ -31,8 +32,12 @@ import {
   esEnEspera, esperaConfirmacionCliente, filtrarSolicitudes, llegadaRegistrada, ordenarEnEspera,
   puedeAceptarSolicitud, puedeFinalizarSolicitud, progresoCliente,
 } from './lib/solicitudes'
+import type { EstadoTecnico } from './lib/solicitudes'
 import { recomendarTecnicos } from './lib/recomendacion'
 import { useMensajesEnVivo, useSolicitudesEnVivo } from './lib/realtime'
+import { usePresenciaTecnico } from './lib/presencia'
+import type { PresenciaTecnico } from './lib/presencia'
+import { subirAvatarTecnico } from './lib/avatares'
 import { registrarPagoInterno } from './lib/transacciones'
 import { registrarPush } from './lib/push'
 import { ARRANQUE_FRIO, cerrarSesion, limpiarSesionDeArranque } from './lib/sesion'
@@ -118,19 +123,64 @@ function VBadge() {
   )
 }
 
+/** Marca de verificación para pasos completados y avisos de confirmación. */
+function CheckMark({ size = 12, color = N }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 12 12" aria-hidden="true" style={{ flexShrink: 0 }}>
+      <path d="M2 6.4 4.6 9 10 3.6" fill="none" stroke={color} strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 /** Foto del técnico. Si no tiene foto (o la URL está rota) se usa la imagen por defecto de su género. */
-function Avatar({ w }: { w: { name: string; avatar: string; genero?: Genero } }) {
+function Avatar({ w, className = '' }: { w: { name: string; avatar: string; genero?: Genero }; className?: string }) {
   const [rota, setRota] = useState(false)
   useEffect(() => { setRota(false) }, [w.avatar])
   if (w.avatar && !rota) {
-    return <img src={w.avatar} alt={w.name} loading="lazy" onError={() => setRota(true)} className="w-full h-full object-cover" />
+    return (
+      <img
+        key={w.avatar}
+        src={w.avatar}
+        alt={w.name}
+        loading="lazy"
+        decoding="async"
+        draggable={false}
+        onError={() => setRota(true)}
+        className={`w-full h-full object-cover ${className}`}
+      />
+    )
   }
+  const genero = w.genero ?? inferirGenero(w.name)
   return (
     <div className="w-full h-full flex items-center justify-center" style={{ backgroundColor: GL }}>
-      <img src={w.genero === 'mujer' ? avatarMujer : avatarHombre} alt={w.name} className="w-full h-full object-contain" />
+      <img src={genero === 'mujer' ? avatarMujer : avatarHombre} alt={w.name} draggable={false}
+        className={`w-full h-full object-contain ${className}`} />
     </div>
   )
 }
+
+/*
+ * Insignia de disponibilidad. Tres estados visibles para el cliente y cuatro
+ * para el técnico (que además distingue "no recibe solicitudes" y "desconectado").
+ */
+const ESTADO_UI: Record<EstadoTecnico, { label: string; cliente: string; bg: string; color: string; dot: string }> = {
+  disponible: { label: 'Disponible', cliente: 'Disponible', bg: GL, color: '#065F46', dot: G },
+  ocupado: { label: 'Ocupado', cliente: 'Ocupado', bg: '#FEF3C7', color: '#92400E', dot: '#F59E0B' },
+  pausado: { label: 'No recibe solicitudes', cliente: 'No disponible', bg: '#F3F4F6', color: '#4B5563', dot: '#9CA3AF' },
+  desconectado: { label: 'Desconectado', cliente: 'No disponible', bg: '#F3F4F6', color: '#4B5563', dot: '#9CA3AF' },
+}
+
+function EstadoBadge({ estado, cliente = false }: { estado: EstadoTecnico; cliente?: boolean }) {
+  const ui = ESTADO_UI[estado]
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full whitespace-nowrap"
+      style={{ backgroundColor: ui.bg, color: ui.color }}>
+      <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: ui.dot }} />
+      {(cliente ? ui.cliente : ui.label).toUpperCase()}
+    </span>
+  )
+}
+
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -403,7 +453,7 @@ function SplashScreen({ openAuth }: { openAuth: (t: AuthTab) => void }) {
       </div>
       <div className="relative z-10 w-full space-y-3">
         {/* Sin contador de técnicos: el arranque solo invita a registrarse o ingresar. */}
-        <PrimaryBtn onClick={() => openAuth('register')}>Registrarme →</PrimaryBtn>
+        <PrimaryBtn onClick={() => openAuth('register')}>Registrarme</PrimaryBtn>
         <button onClick={() => openAuth('login')} className="w-full min-h-[52px] rounded-2xl font-semibold text-base border"
           style={{ borderColor: 'rgba(255,255,255,0.22)', color: 'rgba(255,255,255,0.85)' }}>Ya tengo cuenta · Ingresar</button>
       </div>
@@ -520,7 +570,7 @@ function AuthScreen({ initialTab, go, onAuth }: { initialTab: AuthTab; go: NavFn
               placeholder="Mínimo 8 caracteres" className={`${INPUT} pr-12`} style={INPUT_STYLE} />
             <button type="button" onClick={() => setVerPassword(v => !v)} aria-label={verPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
               className="absolute right-1 top-1/2 -translate-y-1/2 w-11 h-11 rounded-xl flex items-center justify-center text-lg" style={{ color: MU }}>
-              <span aria-hidden="true">{verPassword ? '🙈' : '👁️'}</span>
+              <span aria-hidden="true" style={{ color: MU }}><IconoMaterial name={verPassword ? 'visibility_off' : 'visibility'} size={20} /></span>
             </button>
           </div>
         </Field>
@@ -534,7 +584,7 @@ function AuthScreen({ initialTab, go, onAuth }: { initialTab: AuthTab; go: NavFn
                 placeholder="Repite tu contraseña" className={`${INPUT} pr-12`} style={INPUT_STYLE} />
               <button type="button" onClick={() => setVerPassword2(v => !v)} aria-label={verPassword2 ? 'Ocultar contraseña' : 'Mostrar contraseña'}
                 className="absolute right-1 top-1/2 -translate-y-1/2 w-11 h-11 rounded-xl flex items-center justify-center text-lg" style={{ color: MU }}>
-                <span aria-hidden="true">{verPassword2 ? '🙈' : '👁️'}</span>
+                <span aria-hidden="true" style={{ color: MU }}><IconoMaterial name={verPassword2 ? 'visibility_off' : 'visibility'} size={20} /></span>
               </button>
             </div>
             {form.password2.length > 0 && form.password !== form.password2 && (
@@ -546,11 +596,11 @@ function AuthScreen({ initialTab, go, onAuth }: { initialTab: AuthTab; go: NavFn
         {tab === 'register' && (
           <Field label="Soy…">
             <div className="grid grid-cols-2 gap-2.5">
-              {([['client', '🏠', 'Busco un Técnico', 'Cliente'], ['worker', '🔧', 'Soy Trabajador', 'Técnico']] as const).map(([id, icon, title, sub]) => (
+              {([['client', 'home', 'Busco un Técnico', 'Cliente'], ['worker', 'build', 'Soy Trabajador', 'Técnico']] as const).map(([id, icon, title, sub]) => (
                 <button key={id} onClick={() => setRole(id)} className="p-3.5 rounded-2xl border text-left transition-all"
                   style={{ borderColor: role === id ? G : BD, backgroundColor: role === id ? GL : W,
                            boxShadow: role === id ? `0 0 0 1.5px ${G}50` : undefined }}>
-                  <div className="text-2xl mb-1.5 leading-none">{icon}</div>
+                  <span className="block mb-1.5" style={{ color: role === id ? GD : MU }}><IconoMaterial name={icon} size={22} /></span>
                   <div className="text-sm font-extrabold leading-tight" style={{ color: N }}>{title}</div>
                   <div className="text-xs mt-0.5" style={{ color: MU }}>{sub}</div>
                 </button>
@@ -563,7 +613,7 @@ function AuthScreen({ initialTab, go, onAuth }: { initialTab: AuthTab; go: NavFn
         <ErrorBox msg={notice} ok />
 
         <PrimaryBtn onClick={handleAuth} disabled={loading}>
-          {loading ? 'Procesando…' : tab === 'login' ? 'Ingresar a mi cuenta →' : role === 'worker' ? 'Crear cuenta y verificar →' : 'Crear cuenta →'}
+          {loading ? 'Procesando…' : tab === 'login' ? 'Ingresar a mi cuenta' : role === 'worker' ? 'Crear cuenta y verificar' : 'Crear cuenta'}
         </PrimaryBtn>
 
         {tab === 'login' && (
@@ -598,9 +648,8 @@ function HomeScreen({ perfil, go, setWorker, onSolicitar }: { perfil: Perfil; go
   const puedeSolicitar = perfil.rol === 'cliente'
 
   /*
-   * La disponibilidad de otros técnicos no siempre llega por Realtime (las RLS
-   * ocultan solicitudes de otros clientes), así que además se refresca cada 30 s.
-   * Así la insignia OCUPADO/DISPONIBLE no queda con datos viejos al contratar.
+   * La disponibilidad de otros técnicos llega por Realtime (canal `tecnico_estado`).
+   * Además se refresca cada 30 s como respaldo por si el canal se cae.
    */
   useEffect(() => {
     const id = window.setInterval(() => tecnicos.reload(), 30_000)
@@ -625,7 +674,7 @@ function HomeScreen({ perfil, go, setWorker, onSolicitar }: { perfil: Perfil; go
         <div className="flex justify-center mb-2">
           <img src={logo} alt="Resolve Pasto" className="h-12 w-auto" />
         </div>
-        <p className="text-sm" style={{ color: 'rgba(255,255,255,0.65)' }}>Hola, {perfil.nombre.split(' ')[0]} 👋</p>
+        <p className="text-sm" style={{ color: 'rgba(255,255,255,0.65)' }}>Hola, {perfil.nombre.split(' ')[0]}</p>
         <h2 className="text-2xl font-extrabold text-white leading-tight mb-4">¿Qué necesitas resolver hoy?</h2>
         <label className="flex items-center gap-3 px-4 min-h-[48px] rounded-2xl" style={{ backgroundColor: W }}>
           <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -656,7 +705,7 @@ function HomeScreen({ perfil, go, setWorker, onSolicitar }: { perfil: Perfil; go
                 )}
               </div>
               <div className="flex flex-wrap gap-2" role="group" aria-label="Filtrar por servicio">
-                {[{ id: null as number | null, nombre: 'Todos', icono: '✨' }, ...cats.data].map(c => {
+                {[{ id: null as number | null, nombre: 'Todos' }, ...cats.data].map(c => {
                   const on = filter === c.id
                   return (
                     <button key={c.id ?? 'todos'} onClick={() => setFilter(c.id)} aria-pressed={on}
@@ -675,7 +724,7 @@ function HomeScreen({ perfil, go, setWorker, onSolicitar }: { perfil: Perfil; go
           <button onClick={() => setSoloDisponibles(v => !v)} aria-pressed={soloDisponibles}
             className="flex items-center gap-2 min-h-[44px] px-3.5 rounded-2xl text-sm font-bold w-full"
             style={{ backgroundColor: soloDisponibles ? GL : W, color: N, border: `1.5px solid ${soloDisponibles ? G : BD}` }}>
-            <span aria-hidden="true">{soloDisponibles ? '✅' : '🕒'}</span>
+            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: soloDisponibles ? GD : '#9CA3AF' }} aria-hidden="true" />
             <span className="flex-1 text-left">Solo disponibles ahora</span>
             <span className="text-xs font-semibold" style={{ color: MU }}>{soloDisponibles ? 'Activado' : 'Ver todos'}</span>
           </button>
@@ -692,7 +741,7 @@ function HomeScreen({ perfil, go, setWorker, onSolicitar }: { perfil: Perfil; go
           )}
           {!tecnicos.loading && !tecnicos.error && visible.length === 0 && (
             <p className="text-sm text-center py-10" style={{ color: MU }}>
-              {tecnicos.data.length === 0 ? 'Aún no hay técnicos aprobados disponibles.' : 'No hay técnicos que coincidan con tu búsqueda.'}
+              {tecnicos.data.length === 0 ? 'Todavía no hay técnicos verificados en el catálogo.' : 'Ningún técnico coincide con tu búsqueda.'}
             </p>
           )}
           <div className="space-y-3">
@@ -705,11 +754,7 @@ function HomeScreen({ perfil, go, setWorker, onSolicitar }: { perfil: Perfil; go
                       <div className="min-w-0">
                         <div className="font-extrabold text-base leading-tight" style={{ color: N }}>{w.name}</div>
                         <div className="text-sm mt-0.5" style={{ color: MU }}>{w.trade}</div>
-                        <span className="inline-flex items-center gap-1 mt-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full"
-                          style={{ backgroundColor: w.disponibleAhora ? GL : '#F3F4F6', color: w.disponibleAhora ? '#065F46' : '#4B5563' }}>
-                          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: w.disponibleAhora ? G : '#9CA3AF' }} />
-                          {w.disponibleAhora ? 'DISPONIBLE' : 'OCUPADO'}
-                        </span>
+                        <span className="mt-1"><EstadoBadge estado={w.estado} cliente /></span>
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0">
                         {puedeSolicitar && <FavoriteButton tecnicoId={w.id} />}
@@ -720,7 +765,7 @@ function HomeScreen({ perfil, go, setWorker, onSolicitar }: { perfil: Perfil; go
                       {w.reviews > 0
                         ? <><Stars r={w.rating} size={12} /><span className="text-sm font-bold" style={{ color: N }}>{w.rating.toFixed(1)}</span>
                             <span className="text-sm" style={{ color: MU }}>({w.reviews})</span></>
-                        : <span className="text-sm" style={{ color: MU }}>Sin reseñas aún</span>}
+                        : <span className="text-sm" style={{ color: MU }}>Aún sin reseñas</span>}
                     </div>
                     <div className="flex flex-wrap gap-x-2 mt-1 text-xs" style={{ color: MU }}>
                       {w.neighborhood && (
@@ -735,7 +780,7 @@ function HomeScreen({ perfil, go, setWorker, onSolicitar }: { perfil: Perfil; go
                 </div>
                 <div className="flex items-center justify-between gap-3 mt-3 pt-3 border-t" style={{ borderColor: BD }}>
                   <div>
-                    <div className="text-xs" style={{ color: MU }}>desde</div>
+                    <div className="text-xs" style={{ color: MU }}>Desde</div>
                     <div className="text-base font-extrabold" style={{ color: GD }}>{fmt(w.priceMin)}</div>
                   </div>
                   <div className="flex gap-2">
@@ -758,14 +803,19 @@ function HomeScreen({ perfil, go, setWorker, onSolicitar }: { perfil: Perfil; go
 }
 
 /* ═════════ Perfil del técnico ═════════ */
-function WorkerScreen({ worker: w, perfil, go, onSolicitar }: { worker: WorkerType; perfil: Perfil; go: NavFn; onSolicitar: (w: WorkerType) => void }) {
+function WorkerScreen({ worker, perfil, go, onSolicitar }: { worker: WorkerType; perfil: Perfil; go: NavFn; onSolicitar: (w: WorkerType) => void }) {
+  const live = useContext(LiveCtx)
+  // La ficha abierta se refresca con Realtime: aceptar o terminar un servicio
+  // cambia la insignia sin tener que volver a la lista.
+  const ficha = useData(() => getTecnicoPublico(worker.id), [worker.id, live.version], worker)
+  const w = ficha.data ?? worker
   const disp = useData(() => getDisponibilidades(w.id), [w.id], [] as Disponibilidad[])
   const horario = disp.data.map(d => `${DIAS[d.dia_semana % 7]} ${d.hora_inicio.slice(0, 5)}–${d.hora_fin.slice(0, 5)}`).join(' · ')
   const rows: [string, string][] = [
-    ['💰 Tarifa', `${fmt(w.priceMin)} – ${fmt(w.priceMax)} COP`],
+    ['Tarifa', `${fmt(w.priceMin)} – ${fmt(w.priceMax)} COP`],
     ['Barrio', w.neighborhood ? `${w.neighborhood}, Pasto` : 'No especificado'],
-    ['📅 Horario', disp.loading ? 'Cargando…' : horario || 'A convenir'],
-    ['🔒 Verificación', w.verified ? 'Identidad verificada' : 'En proceso de verificación'],
+    ['Horario de atención', disp.loading ? 'Cargando…' : horario || 'A convenir'],
+    ['Verificación', w.verified ? 'Identidad verificada' : 'En proceso de verificación'],
   ]
   return (
     <div className="flex flex-col h-full" style={{ backgroundColor: BG }}>
@@ -801,12 +851,8 @@ function WorkerScreen({ worker: w, perfil, go, onSolicitar }: { worker: WorkerTy
             {w.reviews > 0
               ? <><Stars r={w.rating} size={14} /><span className="text-base font-extrabold" style={{ color: N }}>{w.rating.toFixed(1)}</span>
                   <span className="text-sm" style={{ color: MU }}>({w.reviews} reseñas)</span></>
-              : <span className="text-sm" style={{ color: MU }}>Sin reseñas aún</span>}
-            <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full"
-              style={{ backgroundColor: w.disponibleAhora ? GL : '#F3F4F6', color: w.disponibleAhora ? '#065F46' : '#4B5563' }}>
-              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: w.disponibleAhora ? G : '#9CA3AF' }} />
-              {w.disponibleAhora ? 'DISPONIBLE' : 'OCUPADO'}
-            </span>
+              : <span className="text-sm" style={{ color: MU }}>Aún sin reseñas</span>}
+            <span className="ml-auto"><EstadoBadge estado={w.estado} cliente /></span>
           </div>
           {w.description && <p className="text-sm leading-relaxed mb-5" style={{ color: N }}>{w.description}</p>}
           <div className="grid grid-cols-3 gap-2.5 mb-5">
@@ -984,11 +1030,11 @@ function RequestScreen({ worker: w, perfil, go, onCreated }: { worker: WorkerTyp
           )}
         </Field>
         <div className="flex items-center gap-2.5 px-3.5 py-3 rounded-2xl" style={{ backgroundColor: GL, border: `1px solid ${G}40` }}>
-          <span>💰</span>
+          <span style={{ color: '#065F46' }}><IconoMaterial name="payments" size={18} /></span>
           <span className="text-xs" style={{ color: '#065F46' }}>Tarifa de referencia: <strong>{fmt(w.priceMin)} – {fmt(w.priceMax)} COP</strong>. El precio final lo acuerdas con el técnico.</span>
         </div>
         <ErrorBox msg={message} />
-        <PrimaryBtn onClick={enviar} disabled={loading}>{loading ? 'Enviando…' : 'Enviar solicitud →'}</PrimaryBtn>
+        <PrimaryBtn onClick={enviar} disabled={loading}>{loading ? 'Enviando…' : 'Enviar solicitud'}</PrimaryBtn>
       </div>
     </div>
   )
@@ -1002,7 +1048,7 @@ function ConfirmScreen({ worker: w, metodoPago, go, enEspera = false }: { worker
         <SuccessMark />
         <h2 className="text-2xl font-extrabold mb-2" style={{ color: N }}>¡Solicitud enviada!</h2>
         <p className="text-base leading-relaxed mb-6" style={{ color: MU }}>
-          <strong style={{ color: N }}>{w.name}</strong> recibirá tu solicitud al instante y te contactará al celular que indicaste. Sigue el estado en <strong style={{ color: N }}>Solicitudes</strong>.
+          <strong style={{ color: N }}>{w.name}</strong> recibirá tu solicitud y te contactará al celular que indicaste. Sigue el estado en <strong style={{ color: N }}>Solicitudes</strong>.
         </p>
         <Card className="flex items-center gap-3 p-4 w-full text-left">
           <div className="w-12 h-12 rounded-2xl overflow-hidden flex-shrink-0"><Avatar w={w} /></div>
@@ -1026,9 +1072,9 @@ function ConfirmScreen({ worker: w, metodoPago, go, enEspera = false }: { worker
         </div>
         {enEspera && (
           <div className="mt-3 w-full rounded-2xl p-4 text-left" style={{ backgroundColor: '#FEF3C7', border: '1px solid #F59E0B70' }}>
-            <p className="text-sm font-extrabold" style={{ color: '#92400E' }}>⏳ Tu solicitud ha sido registrada</p>
+            <p className="text-sm font-extrabold" style={{ color: '#92400E' }}>Tu solicitud quedó registrada</p>
             <p className="text-xs mt-1 leading-relaxed" style={{ color: '#92400E' }}>
-              Este técnico tiene un servicio en curso, por lo que tu atención podría tardar más de lo habitual. Te notificaremos cuando llegue tu turno.
+              El técnico la verá al conectarse. Si tiene un servicio en curso, la atención puede tardar más de lo habitual. Te avisaremos cuando la acepte.
             </p>
           </div>
         )}
@@ -1169,7 +1215,7 @@ function SeguimientoCliente({ p }: { p: Pedido }) {
       <div className="text-xs font-extrabold uppercase tracking-wider mb-2" style={{ color: N }}>Seguimiento del servicio</div>
       {prog.enEspera && (
         <div className="mb-3 rounded-xl px-3 py-2.5 text-xs leading-relaxed font-semibold" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>
-          ⏳ Tu solicitud está en espera. El técnico la atenderá cuando termine el servicio anterior; se activará automáticamente y no se atenderá al mismo tiempo.
+          Tu solicitud está en espera. El técnico la atenderá cuando termine el servicio anterior; se activará automáticamente y no se atenderá al mismo tiempo.
         </div>
       )}
       <ol className="space-y-2.5">
@@ -1177,7 +1223,7 @@ function SeguimientoCliente({ p }: { p: Pedido }) {
           <li key={paso.label} className="flex items-center gap-2.5">
             <span className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-[11px] font-extrabold"
               style={{ backgroundColor: paso.hecho ? G : '#EEF2EE', color: paso.hecho ? N : MU }}>
-              {paso.hecho ? '✓' : i + 1}
+              {paso.hecho ? <CheckMark size={13} /> : i + 1}
             </span>
             <span className="text-sm font-semibold" style={{ color: paso.hecho ? N : MU }}>{paso.label}</span>
           </li>
@@ -1195,14 +1241,14 @@ function ConfirmacionCliente({ p, busy, onConfirmar }: { p: Pedido; busy: boolea
   const enEspera = esEnEspera(p.estado)
   return (
     <div className="mt-3 rounded-2xl p-3.5" style={{ backgroundColor: GL, border: `1.5px solid ${G}70` }}>
-      <div className="text-xs font-extrabold uppercase tracking-wider mb-1" style={{ color: GD }}>✅ Confirma a tu técnico</div>
+      <div className="text-xs font-extrabold uppercase tracking-wider mb-1" style={{ color: GD }}>Confirma a tu técnico</div>
       {enEspera ? (
         <>
           <p className="text-sm leading-relaxed mb-3" style={{ color: N }}>
             <strong>{p.tecnicoNombre}</strong> aceptó tu solicitud, pero en este momento está atendiendo otro servicio.
           </p>
           <div className="mb-3 rounded-xl px-3 py-2.5 text-xs leading-relaxed font-semibold" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>
-            ⏳ Si confirmas, tu solicitud quedará <strong>en espera</strong>. Se activará automáticamente cuando termine el servicio actual, en orden de aceptación. Te atenderá lo más pronto posible.
+            Si confirmas, tu solicitud quedará <strong>en espera</strong>. Se activará automáticamente cuando termine el servicio actual, en orden de aceptación. Te atenderá lo más pronto posible.
           </div>
         </>
       ) : (
@@ -1233,7 +1279,7 @@ function DiagnosticoBox({ pedido, onSaved }: { pedido: Pedido; onSaved: () => vo
   }
   return (
     <div className="mt-3 rounded-2xl p-3.5" style={{ backgroundColor: W, border: `1.5px solid ${BD}` }}>
-      <label htmlFor={`diag-${pedido.id}`} className="text-xs font-extrabold uppercase tracking-wider block mb-1" style={{ color: N }}>🩺 Diagnóstico del daño</label>
+      <label htmlFor={`diag-${pedido.id}`} className="text-xs font-extrabold uppercase tracking-wider block mb-1" style={{ color: N }}>Diagnóstico del daño</label>
       <p className="text-xs mb-2" style={{ color: MU }}>Cuéntale al cliente qué encontraste y qué se necesita. Él lo verá en su solicitud.</p>
       <textarea id={`diag-${pedido.id}`} rows={4} maxLength={1000} value={txt} onChange={e => { setTxt(e.target.value); setOk(false) }}
         placeholder="Ej: La fuga viene del sifón del lavamanos; se necesita cambiar la pieza y sellar la unión…"
@@ -1253,7 +1299,7 @@ function DiagnosticoVista({ p }: { p: Pedido }) {
   if (!p.diagnostico) return null
   return (
     <div className="mt-3 rounded-2xl p-3.5" style={{ backgroundColor: GL, border: `1px solid ${G}55` }}>
-      <div className="text-xs font-extrabold uppercase tracking-wider mb-1" style={{ color: GD }}>🩺 Diagnóstico del técnico</div>
+      <div className="text-xs font-extrabold uppercase tracking-wider mb-1" style={{ color: GD }}>Diagnóstico del técnico</div>
       <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: N }}>{p.diagnostico}</p>
       {p.diagnosticoEn && <p className="text-xs mt-1.5" style={{ color: MU }}>Registrado el {fechaHora(p.diagnosticoEn)}</p>}
     </div>
@@ -1339,7 +1385,7 @@ function PagoBox({ pedido, onSaved, onAbrirChat }: { pedido: Pedido; onSaved: ()
     <div className="mt-3 rounded-2xl p-4" style={{ backgroundColor: W, border: `1.5px solid ${G}70`, boxShadow: '0 4px 18px rgba(46,223,45,0.12)' }}>
       <div className="flex items-start justify-between gap-2 mb-1">
         <div>
-          <div className="text-xs font-extrabold uppercase tracking-wider" style={{ color: GD }}>💳 Pago del servicio</div>
+          <div className="text-xs font-extrabold uppercase tracking-wider" style={{ color: GD }}>Pago del servicio</div>
           <div className="text-lg font-extrabold mt-0.5" style={{ color: N }}>
             {total != null ? fmt(total) : 'Precio a acordar'}
           </div>
@@ -1355,7 +1401,7 @@ function PagoBox({ pedido, onSaved, onAbrirChat }: { pedido: Pedido; onSaved: ()
 
       {pagado ? (
         <div className="mt-3 rounded-2xl px-3.5 py-3" style={{ backgroundColor: GL, border: `1px solid ${G}50` }}>
-          <p className="text-sm font-bold" style={{ color: '#065F46' }}>✓ Pago confirmado</p>
+          <p className="text-sm font-bold flex items-center gap-1.5" style={{ color: '#065F46' }}><CheckMark size={13} color="#065F46" /> Pago confirmado</p>
           <p className="text-xs mt-0.5" style={{ color: MU }}>{metodoPagoInfo(pedido.metodoPago)?.nombre ?? 'Pago'} · {etiquetaEstadoPago(pedido.pagoEstado)}</p>
         </div>
       ) : !elegible ? (
@@ -1371,8 +1417,8 @@ function PagoBox({ pedido, onSaved, onAbrirChat }: { pedido: Pedido; onSaved: ()
           </div>
           {infoGuardado && <p className="text-xs mt-2 leading-relaxed" style={{ color: MU }}>{infoGuardado.instruccionCliente}</p>}
           {infoGuardado?.grupo === 'transferencia' && onAbrirChat && (
-            <button onClick={onAbrirChat} className="mt-2 min-h-[44px] px-3.5 rounded-xl text-xs font-extrabold" style={{ backgroundColor: N, color: W }}>
-              💬 Pedirle los datos al técnico
+            <button onClick={onAbrirChat} className="mt-2 min-h-[44px] px-3.5 rounded-xl text-xs font-extrabold inline-flex items-center gap-1.5" style={{ backgroundColor: N, color: W }}>
+              <IconoMaterial name="chat_bubble" size={15} /> Pedirle los datos al técnico
             </button>
           )}
           <p className="text-[11px] mt-2" style={{ color: MU }}>Podrás cambiarlo cuando el servicio esté terminado.</p>
@@ -1392,8 +1438,8 @@ function PagoBox({ pedido, onSaved, onAbrirChat }: { pedido: Pedido; onSaved: ()
                 </p>
               )}
               {info.grupo === 'transferencia' && onAbrirChat && (
-                <button onClick={onAbrirChat} className="mt-2 min-h-[44px] px-3.5 rounded-xl text-xs font-extrabold" style={{ backgroundColor: N, color: W }}>
-                  💬 Pedirle los datos al técnico
+                <button onClick={onAbrirChat} className="mt-2 min-h-[44px] px-3.5 rounded-xl text-xs font-extrabold inline-flex items-center gap-1.5" style={{ backgroundColor: N, color: W }}>
+                  <IconoMaterial name="chat_bubble" size={15} /> Pedirle los datos al técnico
                 </button>
               )}
             </div>
@@ -1467,7 +1513,7 @@ function PagoResumenTecnico({ p, onSaved }: { p: Pedido; onSaved?: () => void })
           <ErrorBox msg={msg} />
           {ok && <div className="mb-2"><ErrorBox ok msg={ok} /></div>}
           <PrimaryBtn onClick={confirmar} disabled={busy}>
-            {busy ? 'Registrando…' : '✓ Confirmar pago recibido'}
+            {busy ? 'Registrando…' : 'Confirmar pago recibido'}
           </PrimaryBtn>
           <p className="text-[11px] text-center mt-2" style={{ color: MU }}>
             Confirma solo cuando ya tengas el dinero. Queda en el historial con la comisión de Resolve.
@@ -1520,7 +1566,7 @@ function FinalizarSolicitudBox({ p, busy, onFinalizar }: { p: Pedido; busy: bool
 
       <div className="flex gap-2 mt-3 flex-wrap">
         {habilitado ? (
-          <AccionBtn primary label={busy ? 'Finalizando…' : '✓ Finalizar solicitud'} disabled={busy}
+          <AccionBtn primary label={busy ? 'Finalizando…' : 'Finalizar solicitud'} disabled={busy}
             onClick={() => { void onFinalizar() }} />
         ) : respondioNo ? (
           <>
@@ -1611,8 +1657,9 @@ function ChatScreen({ pedido, perfil, go, volver }: { pedido: Pedido; perfil: Pe
       <div className="flex-1 min-h-0 flex flex-col">
         {acceso.motivo && (
           <div className="flex-shrink-0 px-4 pt-3">
-            <div className="rounded-2xl px-3.5 py-3 text-xs font-semibold" style={{ backgroundColor: acceso.puedeVer ? '#FEF3C7' : '#FEF2F2', color: acceso.puedeVer ? '#92400E' : '#991B1B' }}>
-              {acceso.puedeVer ? '🔒 ' : '⚠️ '}{acceso.motivo}
+            <div className="rounded-2xl px-3.5 py-3 text-xs font-semibold flex items-start gap-2" style={{ backgroundColor: acceso.puedeVer ? '#FEF3C7' : '#FEF2F2', color: acceso.puedeVer ? '#92400E' : '#991B1B' }}>
+              <IconoMaterial name={acceso.puedeVer ? 'lock' : 'warning'} size={15} />
+              <span>{acceso.motivo}</span>
             </div>
           </div>
         )}
@@ -1627,7 +1674,7 @@ function ChatScreen({ pedido, perfil, go, volver }: { pedido: Pedido; perfil: Pe
           )}
           {!chat.loading && !chat.error && chat.data.length === 0 && (
             <div className="text-center py-10">
-              <div className="text-4xl mb-2" aria-hidden="true">💬</div>
+              <div className="mb-2 flex justify-center" style={{ color: MU }}><IconoMaterial name="chat_bubble" size={36} /></div>
               <p className="text-sm" style={{ color: MU }}>
                 {acceso.puedeEscribir ? 'Aún no hay mensajes. Coordina con la otra persona aquí, sin compartir tu número si no quieres.' : 'No hay mensajes en esta solicitud.'}
               </p>
@@ -1674,7 +1721,9 @@ function ChatScreen({ pedido, perfil, go, volver }: { pedido: Pedido; perfil: Pe
         ) : (
           <div className="flex-shrink-0 px-4 pt-3 border-t" style={{ backgroundColor: W, borderColor: BD, paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
             <ErrorBox msg={error} />
-            <p className="text-xs text-center font-semibold" style={{ color: MU }}>🔒 Chat en solo lectura. El historial se conserva.</p>
+            <p className="text-xs text-center font-semibold flex items-center justify-center gap-1.5" style={{ color: MU }}>
+              <IconoMaterial name="lock" size={13} /> Chat en solo lectura. El historial se conserva.
+            </p>
           </div>
         )}
       </div>
@@ -1685,19 +1734,26 @@ function ChatScreen({ pedido, perfil, go, volver }: { pedido: Pedido; perfil: Pe
 
 type AccionSolicitud = 'aceptar' | 'rechazar' | 'cancelar' | 'confirmar' | 'navegar' | 'llegar' | 'completar'
 const OK_ACCION: Record<AccionSolicitud, string> = {
-  aceptar: '✓ Solicitud aceptada. El cliente debe confirmarla para que puedas ir al domicilio.',
+  aceptar: 'Solicitud aceptada. El cliente debe confirmarla para que puedas ir al domicilio.',
   rechazar: 'Solicitud rechazada.',
   cancelar: 'Solicitud cancelada.',
-  confirmar: '✓ Confirmaste al técnico. Te avisaremos cuando se dirija a tu domicilio.',
-  navegar: '✓ Ahora estás dirigiéndote al domicilio del cliente.',
-  llegar: '✓ Llegada registrada. El cliente ya ve que estás en el domicilio.',
-  completar: '✓ Solicitud finalizada. Ya estás disponible para recibir nuevas solicitudes.',
+  confirmar: 'Confirmaste al técnico. Te avisaremos cuando se dirija a tu domicilio.',
+  navegar: 'Ahora estás dirigiéndote al domicilio del cliente.',
+  llegar: 'Llegada registrada. El cliente ya ve que estás en el domicilio.',
+  completar: 'Solicitud finalizada. Ya estás disponible para recibir nuevas solicitudes.',
 }
 
 /** Encabezado de sección o tarjeta de solicitud, en el orden en que se pinta. */
 type ElementoLista = { tipo: 'seccion'; titulo: string; nota?: string } | { tipo: 'pedido'; p: Pedido }
 
-function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas' }: { perfil: Perfil; go: NavFn; onRate: (p: Pedido) => void; onChat: (p: Pedido, volver: Screen) => void; modo?: 'activas' | 'completadas' }) {
+function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas', presencia }: {
+  perfil: Perfil
+  go: NavFn
+  onRate: (p: Pedido) => void
+  onChat: (p: Pedido, volver: Screen) => void
+  modo?: 'activas' | 'completadas'
+  presencia?: PresenciaTecnico
+}) {
   const live = useContext(LiveCtx)
   // Se recarga sola cada vez que Realtime reporta un cambio (live.version)
   const pedidos = useData(() => getPedidos(perfil), [perfil.id, perfil.rol, live.version], [] as Pedido[])
@@ -1720,6 +1776,24 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas' }: { perfil
   )
   // Disponibilidad derivada de las solicitudes activas, no de una columna que pueda quedar vieja.
   const disponibilidad = useMemo(() => disponibilidadTecnico(pedidos.data), [pedidos.data])
+  /*
+   * El encabezado del técnico usa la misma autoridad que su perfil (presencia +
+   * interruptor + servicio activo). Así "pausado" o "desconectado" nunca se
+   * muestran como disponible. Sin migración aplicada cae al cálculo local.
+   */
+  const estadoPropio: EstadoTecnico = presencia?.estado?.estado
+    ?? (disponibilidad.estado === 'ocupado' ? 'ocupado' : 'disponible')
+  const solicitudActiva = presencia?.estado?.solicitudActiva
+    ?? (disponibilidad.estado === 'ocupado' ? disponibilidad.solicitud.id : null)
+  const textoEstadoPropio = estadoPropio === 'disponible'
+    ? 'No tienes servicios activos.'
+    : estadoPropio === 'ocupado'
+      ? (solicitudActiva
+          ? `Atendiendo la solicitud #${solicitudActiva}. Las nuevas quedan registradas sin interrumpir.`
+          : 'Atendiendo un servicio. Las nuevas quedan registradas sin interrumpir.')
+      : estadoPropio === 'pausado'
+        ? 'No estás recibiendo solicitudes nuevas. Puedes activarlo desde tu perfil.'
+        : 'Sin conexión reciente con el servidor. Abre la app de nuevo para volver a aparecer disponible.'
 
   /*
    * Vista del técnico separada por secciones para que nunca confunda su
@@ -1823,9 +1897,11 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas' }: { perfil
   const vacio = esTec
     ? (modo === 'completadas'
         ? 'Aún no tienes solicitudes finalizadas.'
-        : disponibilidad.estado === 'ocupado'
+        : estadoPropio === 'ocupado'
           ? 'Estás ocupado con un servicio. Las solicitudes nuevas quedan registradas aquí y podrás aceptarlas cuando termines.'
-          : 'Estás disponible. Cuando llegue una solicitud, aparecerá aquí al instante.')
+          : estadoPropio === 'disponible'
+            ? 'Estás disponible. Cuando llegue una solicitud, aparecerá aquí al instante.'
+            : 'No estás visible para clientes nuevos. Activa "Recibir solicitudes" en tu perfil para recibir solicitudes.')
     : 'Todavía no has solicitado ningún servicio.'
 
   return (
@@ -1839,15 +1915,13 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas' }: { perfil
       <div className="flex-1 overflow-y-auto px-4 pt-4 pb-safe space-y-3" style={{ scrollbarWidth: 'none' }}>
         {esTec && modo === 'activas' && !pedidos.loading && (
           <div className="rounded-2xl px-4 py-3 flex items-center gap-3" style={{ backgroundColor: W, border: `1px solid ${BD}` }}>
-            <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: disponibilidad.estado === 'disponible' ? G : '#F59E0B' }} />
+            <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: ESTADO_UI[estadoPropio].dot }} />
             <div className="min-w-0">
               <p className="text-sm font-extrabold" style={{ color: N }}>
-                {disponibilidad.estado === 'disponible' ? 'Disponible' : 'Ocupado'}
+                {ESTADO_UI[estadoPropio].label}
               </p>
-              <p className="text-xs" style={{ color: MU }}>
-                {disponibilidad.estado === 'disponible'
-                  ? 'No tienes servicios activos.'
-                  : `Atendiendo la solicitud #${disponibilidad.solicitud.id}. Las nuevas quedan registradas sin interrumpir.`}
+              <p className="text-xs leading-relaxed" style={{ color: MU }}>
+                {textoEstadoPropio}
               </p>
             </div>
           </div>
@@ -1884,9 +1958,17 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas' }: { perfil
 
               {verDatos ? <DatosServicio p={p} onNavigate={accion === 'navegar' ? () => ejecutar(p.id, 'navegar') : undefined} /> : (
                 <>
-                  <div className="text-xs mb-2" style={{ color: MU }}>
-                    📅 {new Date(p.fecha + 'T00:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'long' })}
-                    {esTec && <> · <a href={`tel:${p.telefonoContacto}`} className="underline font-semibold">📞 {p.telefonoContacto}</a></>}
+                  <div className="text-xs mb-2 flex items-center gap-1.5 flex-wrap" style={{ color: MU }}>
+                    <IconoMaterial name="calendar_month" size={12} />
+                    <span>{new Date(p.fecha + 'T00:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'long' })}</span>
+                    {esTec && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <a href={`tel:${p.telefonoContacto}`} className="underline font-semibold inline-flex items-center gap-1">
+                          <IconoMaterial name="call" size={12} /> {p.telefonoContacto}
+                        </a>
+                      </>
+                    )}
                   </div>
                   <p className="text-sm leading-relaxed" style={{ color: N }}>{p.descripcion}</p>
                   {!esTec && p.direccion && (
@@ -1925,7 +2007,7 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas' }: { perfil
               {esTec && llegadaRegistrada(p.estado) && (
                 <div className="mt-3 flex items-center gap-2 rounded-2xl px-3.5 py-2.5 text-xs font-extrabold"
                   style={{ backgroundColor: GL, color: '#0B5D1E', border: `1px solid ${G}80` }}>
-                  <span className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: G, color: N }}>✓</span>
+                  <span className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: G, color: N }}><CheckMark size={12} /></span>
                   Llegada registrada
                 </div>
               )}
@@ -1957,11 +2039,16 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas' }: { perfil
                   <AccionBtn label="Cancelar solicitud" disabled={busy !== null} onClick={() => ejecutar(p.id, 'cancelar')} />
                 )}
                 {p.estado === 'completada' && !p.calificada && (
-                  <button onClick={() => { onRate(p); go('rate') }} className="flex-1 min-h-[44px] px-4 rounded-2xl text-[13px] font-extrabold" style={{ backgroundColor: G, color: N }}>
-                    {esTec ? 'Calificar al cliente ★' : 'Calificar al técnico ★'}
+                  <button onClick={() => { onRate(p); go('rate') }} className="flex-1 min-h-[44px] px-4 rounded-2xl text-[13px] font-extrabold inline-flex items-center justify-center gap-1.5" style={{ backgroundColor: G, color: N }}>
+                    <IconoMaterial name="star" size={15} />
+                    {esTec ? 'Calificar al cliente' : 'Calificar al técnico'}
                   </button>
                 )}
-                {p.estado === 'completada' && p.calificada && <span className="text-xs font-semibold self-center" style={{ color: MU }}>✓ Ya calificaste</span>}
+                {p.estado === 'completada' && p.calificada && (
+                  <span className="text-xs font-semibold self-center inline-flex items-center gap-1" style={{ color: MU }}>
+                    <CheckMark size={12} color={MU} /> Ya calificaste
+                  </span>
+                )}
               </div>
 
               {/* Aviso cuando hay otro servicio activo: la nueva quedará en espera. */}
@@ -1978,7 +2065,8 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas' }: { perfil
               {mostrarBotonChat(p.estado) && (
                 <button onClick={() => abrirChat(p)} className="mt-2 w-full min-h-[44px] px-4 rounded-2xl text-[13px] font-extrabold border flex items-center justify-center gap-2"
                   style={{ borderColor: BD, color: N, backgroundColor: W }}>
-                  💬 {puedeEscribirChat ? `Chat con ${esTec ? 'el cliente' : 'el técnico'}` : 'Ver chat (solo lectura)'}
+                  <IconoMaterial name="chat_bubble" size={15} />
+                  {puedeEscribirChat ? `Chat con ${esTec ? 'el cliente' : 'el técnico'}` : 'Ver chat (solo lectura)'}
                 </button>
               )}
 
@@ -2203,7 +2291,9 @@ function CuentaBancariaBox({ perfil }: { perfil: Perfil }) {
 
   return (
     <Card className="p-4">
-      <div className="text-xs font-extrabold uppercase tracking-wider mb-1" style={{ color: N }}>🏦 Cuenta bancaria para recibir pagos</div>
+      <div className="text-xs font-extrabold uppercase tracking-wider mb-1 inline-flex items-center gap-1.5" style={{ color: N }}>
+        <IconoMaterial name="account_balance" size={14} /> Cuenta bancaria para recibir pagos
+      </div>
       <p className="text-xs mb-3 leading-relaxed" style={{ color: MU }}>
         Aquí se transferirán los pagos con tarjeta o Google Pay cuando se confirme el cobro. Solo tú puedes ver estos datos: los clientes nunca los ven.
       </p>
@@ -2255,31 +2345,132 @@ function CuentaBancariaBox({ perfil }: { perfil: Perfil }) {
 }
 
 /* ═════════ Perfil / sesión ═════════ */
-function ProfileScreen({ perfil, go, onLogout }: { perfil: Perfil; go: NavFn; onLogout: () => Promise<void> }) {
+function ProfileScreen({ perfil, go, onLogout, presencia }: {
+  perfil: Perfil
+  go: NavFn
+  onLogout: () => Promise<void>
+  presencia: PresenciaTecnico
+}) {
+  const live = useContext(LiveCtx)
   const ver = useData(() => perfil.rol === 'tecnico' ? getMiVerificacion(perfil.id) : Promise.resolve(null), [perfil.id], null)
   /*
-   * Disponibilidad del técnico: se deriva de sus solicitudes activas, igual que
-   * en la lista de Solicitudes. No hay columna persistida que pueda quedar vieja:
-   * al terminar el servicio la solicitud sale de los estados activos y el técnico
-   * vuelve a "Disponible" automáticamente.
+   * Respaldo local mientras el servidor responde la primera vez: la autoridad
+   * es `mi_estado_tecnico()` (migración 20261113), que combina presencia,
+   * interruptor y servicio activo.
    */
   const pedidosTec = useData(
     () => perfil.rol === 'tecnico' ? getPedidos(perfil) : Promise.resolve([] as Pedido[]),
-    [perfil.id, perfil.rol],
+    [perfil.id, perfil.rol, live.version],
     [] as Pedido[],
   )
   const disp = useMemo(() => disponibilidadTecnico(pedidosTec.data), [pedidosTec.data])
   const [busy, setBusy] = useState(false)
-  const estadoVer = ver.data ? (ver.data.verificado ? 'Verificado ✓' : `En revisión${ver.data.estado ? ` (${ver.data.estado})` : ''}`) : null
+
+  // Foto de perfil del técnico: se puede cambiar desde el botón de la cámara.
+  const foto = useData(
+    () => perfil.rol === 'tecnico' ? getMiFotoTecnico(perfil.id) : Promise.resolve(null),
+    [perfil.id, perfil.rol, live.version],
+    null as string | null,
+  )
+  const tecnicoId = useData(
+    () => perfil.rol === 'tecnico' ? getMiTecnicoId(perfil.id) : Promise.resolve(null),
+    [perfil.id, perfil.rol],
+    null as number | null,
+  )
+  const [fotoUrl, setFotoUrl] = useState<string | null>(null)
+  const [subiendo, setSubiendo] = useState(false)
+  const [fotoError, setFotoError] = useState('')
+  const entradaFoto = useRef<HTMLInputElement>(null)
+  useEffect(() => { setFotoUrl(foto.data ?? null) }, [foto.data])
+
+  const elegirFoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const archivo = e.target.files?.[0]
+    e.target.value = ''
+    if (!archivo) return
+    setFotoError('')
+    if (!tecnicoId.data) {
+      setFotoError('No encontramos tu ficha de técnico. Vuelve a iniciar sesión.')
+      return
+    }
+    setSubiendo(true)
+    try {
+      const url = await subirAvatarTecnico(tecnicoId.data, archivo)
+      setFotoUrl(url)
+      foto.reload()
+    } catch (err) {
+      setFotoError(err instanceof Error ? err.message : 'No pudimos subir la foto. Intenta de nuevo.')
+    } finally {
+      setSubiendo(false)
+    }
+  }
+
+  const estadoPropio: EstadoTecnico = presencia.estado?.estado
+    ?? (disp.estado === 'ocupado' ? 'ocupado' : 'disponible')
+  const recibiendo = presencia.estado?.recibiendoSolicitudes ?? true
+  const solicitudActiva = presencia.estado?.solicitudActiva
+    ?? (disp.estado === 'ocupado' ? disp.solicitud.id : null)
+
+  const textoEstado = estadoPropio === 'disponible'
+    ? 'Los clientes te ven disponible y pueden enviarte solicitudes.'
+    : estadoPropio === 'ocupado'
+      ? (solicitudActiva
+          ? `Atendiendo la solicitud #${solicitudActiva}. Al terminarla volverás a estar disponible si sigues recibiendo solicitudes.`
+          : 'Atendiendo un servicio. Al terminarlo volverás a estar disponible si sigues recibiendo solicitudes.')
+      : estadoPropio === 'pausado'
+        ? 'Estás conectado, pero no recibirás solicitudes nuevas hasta que actives el interruptor.'
+        : 'Sin conexión reciente con el servidor. Abre la app de nuevo para volver a aparecer disponible.'
+
+  const alternar = async (nuevo: boolean) => {
+    try {
+      await presencia.alternar(nuevo)
+    } catch {
+      // El mensaje se muestra dentro de la tarjeta de disponibilidad.
+    }
+  }
+
+  const estadoVer = ver.data ? (ver.data.verificado ? 'Verificado' : `En revisión${ver.data.estado ? ` (${ver.data.estado})` : ''}`) : null
   const rows: [string, string][] = [['Correo', perfil.email], ['Tipo de cuenta', perfil.rol === 'tecnico' ? 'Técnico' : 'Cliente']]
   if (perfil.telefono) rows.push(['Celular', perfil.telefono])
   if (estadoVer) rows.push(['Verificación', estadoVer])
+
+  const menu: { s: Screen; icon: IconoMaterialNombre; label: string; desc: string }[] = [
+    ...(perfil.rol === 'tecnico'
+      ? [
+          { s: 'earnings' as Screen, icon: 'payments' as const, label: 'Ganancias', desc: 'Ingresos, comisión y ticket promedio.' },
+          { s: 'agenda' as Screen, icon: 'calendar_month' as const, label: 'Mi agenda', desc: 'Horario semanal y días bloqueados.' },
+          { s: 'portfolio' as Screen, icon: 'photo_library' as const, label: 'Portafolio y documentos', desc: 'Muestra tu trabajo y mantén tus papeles al día.' },
+        ]
+      : []),
+    { s: 'transactions', icon: 'receipt_long', label: perfil.rol === 'tecnico' ? 'Pagos y comisiones' : 'Pagos y reembolsos', desc: 'Historial con cada cobro, comisión y reembolso.' },
+    { s: 'notifications', icon: 'notifications', label: 'Notificaciones', desc: 'Preferencias, bandeja y push del dispositivo.' },
+    { s: 'referrals', icon: 'redeem', label: 'Invita y gana', desc: 'Tu código, recompensas y cobertura por barrio.' },
+    { s: 'help', icon: 'support_agent', label: 'Ayuda y soporte', desc: 'Preguntas frecuentes y tickets.' },
+  ]
+
   return (
     <div className="flex flex-col h-full" style={{ backgroundColor: BG }}>
       <DarkHeader>
         <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-full flex items-center justify-center text-2xl font-extrabold flex-shrink-0" style={{ backgroundColor: G, color: N }} aria-hidden="true">
-            {perfil.nombre.charAt(0).toUpperCase()}
+          <div className="relative flex-shrink-0">
+            <div className="w-16 h-16 rounded-full overflow-hidden" style={{ backgroundColor: GL }}>
+              {perfil.rol === 'tecnico'
+                ? <Avatar w={{ name: perfil.nombre, avatar: fotoUrl ?? '', genero: inferirGenero(perfil.nombre) }} />
+                : (
+                  <div className="w-full h-full flex items-center justify-center text-2xl font-extrabold" style={{ backgroundColor: G, color: N }} aria-hidden="true">
+                    {perfil.nombre.charAt(0).toUpperCase()}
+                  </div>
+                )}
+            </div>
+            {perfil.rol === 'tecnico' && (
+              <button type="button" onClick={() => entradaFoto.current?.click()} disabled={subiendo}
+                aria-label={subiendo ? 'Subiendo foto de perfil' : 'Cambiar foto de perfil'}
+                className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full flex items-center justify-center"
+                style={{ backgroundColor: G, color: N, border: `2px solid ${N}` }}>
+                <IconoMaterial name="photo_camera" size={14} />
+              </button>
+            )}
+            <input ref={entradaFoto} type="file" accept="image/*" className="sr-only"
+              onChange={elegirFoto} aria-label="Elegir foto de perfil" />
           </div>
           <div className="min-w-0">
             <h2 className="text-xl font-extrabold text-white leading-tight break-words">{perfil.nombre}</h2>
@@ -2288,38 +2479,50 @@ function ProfileScreen({ perfil, go, onLogout }: { perfil: Perfil; go: NavFn; on
         </div>
       </DarkHeader>
       <div className="flex-1 overflow-y-auto px-4 pt-4 pb-safe space-y-4" style={{ scrollbarWidth: 'none' }}>
-        {perfil.rol === 'tecnico' && !pedidosTec.loading && (
-          <div className="rounded-2xl px-4 py-3 flex items-center gap-3" style={{ backgroundColor: W, border: `1px solid ${BD}` }}>
-            <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: disp.estado === 'disponible' ? G : '#F59E0B' }} />
-            <div className="min-w-0">
-              <p className="text-sm font-extrabold" style={{ color: N }}>{disp.estado === 'disponible' ? 'Disponible' : 'Ocupado'}</p>
-              <p className="text-xs" style={{ color: MU }}>
-                {disp.estado === 'disponible'
-                  ? 'Puedes recibir y aceptar solicitudes.'
-                  : `Atendiendo la solicitud #${disp.solicitud.id}. Al terminarla volverás a estar disponible.`}
-              </p>
+        {subiendo && <p className="text-xs font-semibold" style={{ color: MU }}>Preparando y subiendo tu foto…</p>}
+        {fotoError && <ErrorBox msg={fotoError} />}
+        {perfil.rol === 'tecnico' && (
+          <Card className="p-4">
+            <div className="flex items-start gap-3">
+              <span className="mt-1.5 w-2.5 h-2.5 rounded-full flex-shrink-0"
+                style={{ backgroundColor: ESTADO_UI[estadoPropio].dot }} />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-extrabold" style={{ color: N }}>{ESTADO_UI[estadoPropio].label}</p>
+                <p className="text-xs mt-0.5 leading-relaxed" style={{ color: MU }}>{textoEstado}</p>
+              </div>
             </div>
-          </div>
+            <div className="flex items-center justify-between gap-4 mt-3 pt-3" style={{ borderTop: `1px solid ${BD}` }}>
+              <div className="min-w-0">
+                <p className="text-sm font-bold" style={{ color: N }}>Recibir solicitudes</p>
+                <p className="text-xs mt-0.5 leading-relaxed" style={{ color: MU }}>
+                  {recibiendo
+                    ? 'Los clientes pueden enviarte solicitudes nuevas.'
+                    : 'Tu perfil sigue visible, pero no recibirás solicitudes nuevas.'}
+                </p>
+              </div>
+              <button type="button" role="switch" aria-checked={recibiendo} aria-label="Recibir solicitudes"
+                disabled={presencia.cambiando}
+                onClick={() => void alternar(!recibiendo)}
+                className="relative w-12 h-7 rounded-full flex-shrink-0 transition-colors disabled:opacity-60"
+                style={{ backgroundColor: recibiendo ? G : '#C7D2C9' }}>
+                <span className="absolute top-1 w-5 h-5 rounded-full bg-white transition-all"
+                  style={{ left: recibiendo ? 26 : 4 }} />
+              </button>
+            </div>
+            {presencia.error && (
+              <p role="alert" className="text-xs mt-2 font-semibold" style={{ color: '#991B1B' }}>{presencia.error}</p>
+            )}
+          </Card>
         )}
         <InfoRows rows={rows} />
         <Card className="overflow-hidden">
-          {([
-            ...(perfil.rol === 'tecnico'
-              ? [
-                  { s: 'earnings' as Screen, icon: '💰', label: 'Ganancias', desc: 'Ingresos, comisión y ticket promedio.' },
-                  { s: 'agenda' as Screen, icon: '🗓️', label: 'Mi agenda', desc: 'Horario semanal y días bloqueados.' },
-                  { s: 'portfolio' as Screen, icon: '🖼️', label: 'Portafolio y documentos', desc: 'Muestra tu trabajo y mantén tus papeles al día.' },
-                ]
-              : []),
-            { s: 'transactions' as Screen, icon: '🧾', label: perfil.rol === 'tecnico' ? 'Pagos y comisiones' : 'Pagos y reembolsos', desc: 'Historial con cada cobro, comisión y reembolso.' },
-            { s: 'notifications' as Screen, icon: '🔔', label: 'Notificaciones', desc: 'Preferencias, bandeja y push del dispositivo.' },
-            { s: 'referrals' as Screen, icon: '🎁', label: 'Invita y gana', desc: 'Tu código, recompensas y cobertura por barrio.' },
-            { s: 'help' as Screen, icon: '🛟', label: 'Ayuda y soporte', desc: 'Preguntas frecuentes y tickets.' },
-          ]).map(item => (
+          {menu.map(item => (
             <button key={item.s} onClick={() => go(item.s)}
               className="w-full flex items-center gap-3 px-4 py-3.5 text-left"
               style={{ borderBottom: `1px solid ${BD}` }}>
-              <span className="text-xl leading-none" aria-hidden="true">{item.icon}</span>
+              <span className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: GL, color: GD }}>
+                <IconoMaterial name={item.icon} size={19} />
+              </span>
               <span className="flex-1 min-w-0">
                 <span className="block text-sm font-extrabold" style={{ color: N }}>{item.label}</span>
                 <span className="block text-xs mt-0.5" style={{ color: MU }}>{item.desc}</span>
@@ -2382,7 +2585,7 @@ function V1Screen({ perfil, draft, setDraft, go }: { perfil: Perfil; draft: Draf
           </div>
         </Field>
         <ErrorBox msg={message} />
-        <PrimaryBtn onClick={siguiente}>Siguiente →</PrimaryBtn>
+        <PrimaryBtn onClick={siguiente}>Siguiente</PrimaryBtn>
       </div>
     </div>
   )
@@ -2443,7 +2646,7 @@ function V2Screen({ draft, go, usuarioId }: { draft: Draft; go: NavFn; usuarioId
           <textarea rows={3} maxLength={500} value={f.descripcion} onChange={set('descripcion')} className={`${INPUT} resize-none`} style={INPUT_STYLE} />
         </Field>
         <ErrorBox msg={message} />
-        <PrimaryBtn onClick={guardar} disabled={loading}>{loading ? 'Guardando…' : 'Enviar para verificación →'}</PrimaryBtn>
+        <PrimaryBtn onClick={guardar} disabled={loading}>{loading ? 'Guardando…' : 'Enviar para verificación'}</PrimaryBtn>
       </div>
     </div>
   )
@@ -2530,6 +2733,8 @@ export default function App() {
     if (saliendoRef.current) return
     saliendoRef.current = true
     try {
+      // Antes de soltar el token: el técnico deja de estar disponible al instante.
+      await presencia.desconectar()
       await cerrarSesion()
     } finally {
       if (Capacitor.isNativePlatform()) await CapApp.exitApp()
@@ -2570,6 +2775,15 @@ export default function App() {
   const { limpiarPendientes } = live
   // Entrar a Solicitudes = ya vio las novedades
   useEffect(() => { if (screen === 'orders') limpiarPendientes() }, [screen, limpiarPendientes])
+
+  /*
+   * Presencia del técnico (latido + interruptor). La disponibilidad la decide el
+   * servidor; aquí solo se mantiene la conexión viva y se expone el estado a la
+   * pantalla de perfil. Con `live.version` se relee cuando Realtime avisa que el
+   * técnico empezó o terminó un servicio en otro dispositivo.
+   */
+  const presencia = usePresenciaTecnico(perfil)
+  useEffect(() => { void presencia.refrescar() }, [live.version, presencia.refrescar])
 
   // Restaura la sesión al abrir la app y reacciona al cierre de sesión.
   //
@@ -2654,6 +2868,9 @@ export default function App() {
     return e.aprobado
   }
   const logout = async () => {
+    // Cerrar sesión es una desconexión explícita: el catálogo debe dejar de
+    // mostrarte disponible antes de invalidar el token.
+    await presencia.desconectar()
     await cerrarSesion()
     // Si la red falló, `signOut` no emite SIGNED_OUT: limpiamos la UI aquí.
     setPerfil(null); setWorker(null); setPedidoRate(null); setPedidoChat(null); setMetodoPago(null); setSolicitudEnEspera(false); resetNav('splash')
@@ -2670,20 +2887,23 @@ export default function App() {
   }
   const abrirChat = (p: Pedido, volver: Screen) => { setPedidoChat(p); setChatOrigen(volver); go('chat') }
   /*
-   * Contratar a un técnico:
-   *   · Disponible → pasa directo al formulario de solicitud.
-   *   · OCUPADO    → se pide confirmación; la solicitud se puede enviar igual y
-   *                  quedará en espera cuando el técnico la acepte.
+   * Contratar a un técnico según su estado real:
+   *   · Disponible  → formulario de solicitud.
+   *   · Ocupado     → se avisa que quedará en espera; el técnico la acepta y la
+   *                   atiende al terminar el servicio actual.
+   *   · No disponible (pausado/desconectado) → se avisa que la solicitud queda
+   *                   pendiente hasta que vuelva a conectarse.
    */
   const solicitarTecnico = (w: WorkerType) => {
     setWorker(w)
-    if (w.disponibleAhora) { setSolicitudEnEspera(false); setTecnicoOcupado(null); go('request') }
+    if (w.estado === 'disponible') { setSolicitudEnEspera(false); setTecnicoOcupado(null); go('request') }
     else setTecnicoOcupado(w)
   }
   const confirmarSolicitudOcupado = () => {
     if (!tecnicoOcupado) return
     setWorker(tecnicoOcupado)
-    setSolicitudEnEspera(true)
+    // Solo la cola de un técnico ocupado se activa sola al terminar el servicio.
+    setSolicitudEnEspera(tecnicoOcupado.estado === 'ocupado')
     setTecnicoOcupado(null)
     go('request')
   }
@@ -2734,12 +2954,12 @@ export default function App() {
       case 'worker': content = <WorkerScreen worker={worker!} perfil={perfil} go={go} onSolicitar={solicitarTecnico} />; break
       case 'request': content = <RequestScreen worker={worker!} perfil={perfil} go={go} onCreated={m => { setMetodoPago(m); go('confirm') }} />; break
       case 'confirm': content = <ConfirmScreen worker={worker!} metodoPago={metodoPago} go={go} enEspera={solicitudEnEspera} />; break
-      case 'orders': content = <OrdersScreen perfil={perfil} go={go} onRate={setPedidoRate} onChat={abrirChat} />; break
-      case 'done': content = <OrdersScreen perfil={perfil} go={go} onRate={setPedidoRate} onChat={abrirChat} modo="completadas" />; break
+      case 'orders': content = <OrdersScreen perfil={perfil} go={go} onRate={setPedidoRate} onChat={abrirChat} presencia={presencia} />; break
+      case 'done': content = <OrdersScreen perfil={perfil} go={go} onRate={setPedidoRate} onChat={abrirChat} modo="completadas" presencia={presencia} />; break
       case 'pending': content = <PendingScreen perfil={perfil} onRefresh={revisarAprobacion} onLogout={logout} />; break
       case 'rate': content = <RateScreen pedido={pedidoRate!} perfil={perfil} go={go} />; break
       case 'chat': content = <ChatScreen pedido={pedidoChat!} perfil={perfil} go={go} volver={chatOrigen} />; break
-      case 'profile': content = <ProfileScreen perfil={perfil} go={go} onLogout={logout} />; break
+      case 'profile': content = <ProfileScreen perfil={perfil} go={go} onLogout={logout} presencia={presencia} />; break
       case 'help': content = <HelpScreen perfil={perfil} go={go} />; break
       case 'transactions': content = <TransactionsScreen perfil={perfil} go={go} />; break
       case 'notifications': content = <NotificationsScreen perfil={perfil} go={go} />; break
@@ -2752,6 +2972,35 @@ export default function App() {
       default: content = <V3Screen go={go} />
     }
   }
+
+  /*
+   * Copy del diálogo cuando el técnico no puede atender de inmediato. "Ocupado"
+   * tiene cola (se activa al terminar); pausado/desconectado solo deja la
+   * solicitud pendiente.
+   */
+  const avisoTecnico = tecnicoOcupado
+    ? tecnicoOcupado.estado === 'ocupado'
+      ? {
+          label: 'Ocupado', bg: '#FEF3C7', color: '#92400E', dot: '#F59E0B',
+          titulo: 'Este técnico está ocupado atendiendo otra solicitud',
+          pregunta: '¿Deseas solicitar sus servicios y esperar tu turno?',
+          detalle: 'Si envías tu solicitud, quedará en espera cuando el técnico la acepte y se activará automáticamente al terminar el servicio actual, en orden de aceptación. Nunca atenderá dos servicios al mismo tiempo.',
+          nota: 'La espera puede ser mayor de lo habitual. Te atenderá lo más pronto posible.',
+          cta: 'Sí, solicitar',
+        }
+      : {
+          label: 'No disponible', bg: '#F3F4F6', color: '#4B5563', dot: '#9CA3AF',
+          titulo: tecnicoOcupado.estado === 'pausado'
+            ? 'Este técnico no está recibiendo solicitudes ahora'
+            : 'Este técnico no está conectado ahora',
+          pregunta: '¿Deseas enviar tu solicitud de todos modos?',
+          detalle: tecnicoOcupado.estado === 'pausado'
+            ? 'Tu solicitud quedará pendiente y el técnico la verá en cuanto reactive su disponibilidad.'
+            : 'Tu solicitud quedará pendiente y el técnico la verá en cuanto abra la app.',
+          nota: 'No hay un tiempo de respuesta garantizado mientras el técnico esté no disponible.',
+          cta: 'Enviar solicitud',
+        }
+    : null
 
   return (
     <div className="h-[100dvh] w-full flex justify-center items-stretch md:items-center" style={{ background: `linear-gradient(160deg, #00001E 0%, ${N} 55%, #0A0A4A 100%)` }}>
@@ -2770,35 +3019,37 @@ export default function App() {
             <span className="text-xs font-extrabold px-3 py-1.5 rounded-xl" style={{ backgroundColor: G, color: N }}>Ver</span>
           </button>
         )}
-        {tecnicoOcupado && (
+        {tecnicoOcupado && avisoTecnico && (
           <div className="absolute inset-0 z-[70] flex items-end sm:items-center justify-center p-4"
             role="dialog" aria-modal="true" aria-labelledby="tecnico-ocupado">
             <div className="absolute inset-0 dialog-backdrop-in" style={{ backgroundColor: 'rgba(0,0,50,0.55)' }} onClick={() => setTecnicoOcupado(null)} />
             <div className="relative w-full max-w-[380px] rounded-3xl p-5 dialog-in" style={{ backgroundColor: W, boxShadow: '0 18px 50px rgba(0,0,50,0.35)' }}>
               <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full mb-2"
-                style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>
-                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: '#F59E0B' }} /> OCUPADO
+                style={{ backgroundColor: avisoTecnico.bg, color: avisoTecnico.color }}>
+                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: avisoTecnico.dot }} />
+                {avisoTecnico.label.toUpperCase()}
               </span>
               <h4 id="tecnico-ocupado" className="text-lg font-extrabold leading-snug" style={{ color: N }}>
-                Este técnico está ocupado atendiendo otra solicitud
+                {avisoTecnico.titulo}
               </h4>
               <p className="text-sm mt-1.5 font-bold leading-relaxed" style={{ color: N }}>
-                ¿Deseas solicitar sus servicios y esperar tu turno?
+                {avisoTecnico.pregunta}
               </p>
               <p className="text-sm mt-1.5 leading-relaxed" style={{ color: MU }}>
-                Si envías tu solicitud, quedará <strong style={{ color: N }}>en espera</strong> cuando el técnico la acepte y se activará automáticamente al terminar el servicio actual, en orden de aceptación. Nunca atenderá dos servicios al mismo tiempo.
+                {avisoTecnico.detalle}
               </p>
-              <div className="mt-2 rounded-xl px-3 py-2.5 text-xs leading-relaxed font-semibold" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>
-                ⏳ Ten en cuenta que la espera puede ser mayor. Te atenderá lo más pronto posible.
+              <div className="mt-2 rounded-xl px-3 py-2.5 text-xs leading-relaxed font-semibold"
+                style={{ backgroundColor: avisoTecnico.bg, color: avisoTecnico.color }}>
+                {avisoTecnico.nota}
               </div>
               <div className="flex gap-2 mt-4">
                 <button onClick={() => setTecnicoOcupado(null)} className="flex-1 min-h-[48px] px-3 rounded-2xl text-sm font-extrabold border"
                   style={{ borderColor: BD, color: N, backgroundColor: W }}>
-                  CANCELAR
+                  Cancelar
                 </button>
                 <button onClick={confirmarSolicitudOcupado} className="flex-1 min-h-[48px] px-3 rounded-2xl text-sm font-extrabold"
                   style={{ backgroundColor: G, color: N }}>
-                  SÍ, SOLICITAR
+                  {avisoTecnico.cta}
                 </button>
               </div>
             </div>

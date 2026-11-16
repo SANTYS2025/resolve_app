@@ -38,6 +38,9 @@ Ejecutar en este orden (el nombre ya ordena):
 20261108_crecimiento.sql
 20261109_pagos_internos.sql
 20261110_archivos_tecnicos.sql
+20261111_cola_solicitudes_gps_daviplata.sql
+20261112_cola_lock_tecnico.sql
+20261113_avatares_disponibilidad.sql
 ```
 
 Cada archivo es idempotente (`if not exists`, `create or replace`, `drop ...
@@ -45,7 +48,9 @@ if exists`). Aun así, no saltes el orden: `20261105` depende de
 `20261104` (notificaciones), `20261108` depende de `20261105`
 (transacciones para recompensar referidos) y `20261109` depende de
 `20261105` (`aplicar_reembolso`). `20261110` requiere `20261107` y crea los
-buckets de Storage.
+buckets de Storage. `20261113` requiere `20261111` y `20261112` y crea la
+tabla `tecnico_estado`, la suscripción de Realtime para ella y el bucket
+`avatares-tecnicos`.
 
 ### Opción A: CLI
 
