@@ -3,8 +3,10 @@ import type { ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { Capacitor } from '@capacitor/core'
 import { App as CapApp } from '@capacitor/app'
-// Copia limpia del logo (recortada, sin el botón de corazón que traía la captura de Figma)
-import logo from './imports/logo.png'
+// Logo limpio: solo la "R" verde y "Resolve Pasto" en blanco, con fondo
+// transparente (sin el lema "Tu hogar en buenas manos", que se repite como
+// texto grande debajo). Al no tener fondo propio ya no necesita `lighten`.
+import logo from './imports/logo-limpio.png'
 // Fotos por defecto según género (recortadas de la guía de perfil de la marca)
 import avatarHombre from './imports/avatar-hombre.png'
 import avatarMujer from './imports/avatar-mujer.png'
@@ -228,18 +230,67 @@ function SuccessMark({ size = 96 }: { size?: number }) {
   )
 }
 
-/** Pantalla de arranque con el logo de Resolve (reemplaza el texto "Cargando…" al abrir la app). */
-function BrandLoader() {
+/*
+ * Splash de arranque: el fondo de marca y, encima, el logo animado (MP4).
+ *
+ * Los dos archivos viven en `public/splash/` y se sirven tal cual (sin que Vite
+ * los procese). El video del logo trae el azul marino opaco restado del archivo
+ * (queda negro) y en CSS se mezcla con `mix-blend-mode: screen`, así el fondo se
+ * ve completo por debajo.
+ */
+const FONDO_SPLASH = `${import.meta.env.BASE_URL}splash/fondo.jpg`
+const LOGO_ANIMADO = `${import.meta.env.BASE_URL}splash/logo.mp4`
+// Tope de seguridad: si el video no arranca (autoplay bloqueado, códec no
+// soportado), la animación se da por vista y el splash no se queda colgado.
+const SPLASH_MAX_MS = 4500
+const SPLASH_FADE_MS = 340
+
+/**
+ * Pantalla de arranque. Se retira sola: cuando el logo terminó su animación
+ * **y** la app ya sabe qué mostrar (sesión restaurada o pantalla de ingreso).
+ * No pide ninguna acción a la persona.
+ */
+function BootSplash({ appReady, onDone }: { appReady: boolean; onDone: () => void }) {
+  const video = useRef<HTMLVideoElement>(null)
+  // `animVista` = el logo ya se reprodujo completo (o se dio por visto).
+  const [animVista, setAnimVista] = useState(false)
+  const [saliendo, setSaliendo] = useState(false)
+  const terminado = useRef(false)
+  // `onDone` cambia de identidad en cada render de App; guardarlo en una ref
+  // evita que el efecto de salida se reinicie y cancele el fundido.
+  const alTerminar = useRef(onDone)
+  alTerminar.current = onDone
+
+  useEffect(() => {
+    const id = window.setTimeout(() => setAnimVista(true), SPLASH_MAX_MS)
+    // Se pide el play explícitamente por si el navegador ignora `autoPlay`.
+    void video.current?.play().catch(() => {})
+    return () => window.clearTimeout(id)
+  }, [])
+
+  useEffect(() => {
+    if (!animVista || !appReady || terminado.current) return
+    terminado.current = true
+    setSaliendo(true)
+    const id = window.setTimeout(() => alTerminar.current(), SPLASH_FADE_MS)
+    return () => window.clearTimeout(id)
+  }, [animVista, appReady])
+
   return (
-    <div className="flex flex-col items-center justify-center h-full px-6" role="status" aria-label="Cargando Resolve Pasto" style={{ backgroundColor: N }}>
-      {/* La entrada va en el contenedor y el latido en el logo: así no compiten dos `transform`. */}
-      <div className="splash-in flex flex-col items-center">
-        <img src={logo} alt="" className="logo-pulse w-60 max-w-[65%] h-auto" style={{ mixBlendMode: 'lighten' }} />
-        {/* El eslogan va como texto aparte para que sea legible aunque venga pequeño dentro del logo. */}
-        <p className="mt-5 text-center text-xl font-bold tracking-wide" style={{ color: W, textShadow: '0 2px 14px rgba(0,0,0,0.55)' }}>
-          Tu hogar en buenas manos
-        </p>
-      </div>
+    <div className="boot-splash" data-done={saliendo} role="status" aria-label="Cargando Resolve Pasto">
+      <img className="boot-splash-bg" src={FONDO_SPLASH} alt="" aria-hidden="true" />
+      <video
+        ref={video}
+        className="boot-splash-logo"
+        src={LOGO_ANIMADO}
+        muted
+        playsInline
+        autoPlay
+        preload="auto"
+        aria-hidden="true"
+        onEnded={() => setAnimVista(true)}
+        onError={() => setAnimVista(true)}
+      />
     </div>
   )
 }
@@ -326,11 +377,11 @@ function SplashScreen({ openAuth }: { openAuth: (t: AuthTab) => void }) {
       style={{ background: `linear-gradient(160deg, ${N} 0%, #0A0A55 100%)`, paddingBottom: 'max(24px, env(safe-area-inset-bottom))' }}>
       <div className="absolute w-80 h-80 rounded-full pointer-events-none"
         style={{ background: 'radial-gradient(circle, rgba(46,223,45,0.18), transparent 70%)', top: '-90px', right: '-90px' }} />
-      {/* El logo ya incluye el nombre y el lema; el h1 queda solo para lectores de pantalla */}
+      {/* El logo ya incluye el nombre; el h1 queda solo para lectores de pantalla */}
       <div className="relative z-10 flex-1 flex flex-col items-center justify-center min-h-0">
         <h1 className="sr-only">Resolve Pasto — Tu hogar en buenas manos</h1>
-        <img src={logo} alt="" className="w-72 max-w-[80%] h-auto" style={{ mixBlendMode: 'lighten' }} />
-        {/* Eslogan legible como texto (el del logo puede quedar muy pequeño en pantallas grandes). */}
+        <img src={logo} alt="" className="w-72 max-w-[80%] h-auto" />
+        {/* El lema va como texto: el logo ya no lo trae, así no se repite. */}
         <p className="mt-4 text-center text-lg sm:text-xl font-bold tracking-wide" style={{ color: W }}>
           Tu hogar en buenas manos
         </p>
@@ -419,7 +470,10 @@ function AuthScreen({ initialTab, go, onAuth }: { initialTab: AuthTab; go: NavFn
     <div className="flex flex-col h-full" style={{ backgroundColor: BG }}>
       <div className="flex-shrink-0 px-5 pt-1 pb-5" style={{ background: `linear-gradient(160deg, ${N} 0%, #0A0A55 100%)` }}>
         <BackBtn onClick={() => go('splash')} />
-        <img src={logo} alt="Resolve Pasto" className="h-16 w-auto mb-3 -ml-1" style={{ mixBlendMode: 'lighten' }} />
+        {/* La marca va centrada: es el ancla visual del módulo. */}
+        <div className="mb-4 flex justify-center">
+          <img src={logo} alt="Resolve Pasto" className="h-16 w-auto" />
+        </div>
         <div className="flex rounded-2xl p-1" style={{ backgroundColor: 'rgba(255,255,255,0.07)' }}>
           {(['register', 'login'] as AuthTab[]).map(t => (
             <button key={t} onClick={() => { setTab(t); setMessage(''); setNotice('') }}
@@ -552,6 +606,10 @@ function HomeScreen({ perfil, go, setWorker, onSolicitar }: { perfil: Perfil; go
   return (
     <div className="flex flex-col h-full" style={{ backgroundColor: BG }}>
       <header className="flex-shrink-0 px-4 pt-4 pb-5" style={{ background: `linear-gradient(135deg, ${N}, #0A0A55)` }}>
+        {/* Logo centrado en la parte superior (antes no había logo en Inicio). */}
+        <div className="flex justify-center mb-2">
+          <img src={logo} alt="Resolve Pasto" className="h-12 w-auto" />
+        </div>
         <p className="text-sm" style={{ color: 'rgba(255,255,255,0.65)' }}>Hola, {perfil.nombre.split(' ')[0]} 👋</p>
         <h2 className="text-2xl font-extrabold text-white leading-tight mb-4">¿Qué necesitas resolver hoy?</h2>
         <label className="flex items-center gap-3 px-4 min-h-[48px] rounded-2xl" style={{ backgroundColor: W }}>
@@ -2404,6 +2462,8 @@ async function destinoInicial(p: Perfil): Promise<{ dest: Screen; aprobado: bool
 export default function App() {
   const [screen, setScreen] = useState<Screen>('splash')
   const [booting, setBooting] = useState(true)
+  // El splash de arranque se retira una sola vez, cuando ya se vio el logo.
+  const [splashTerminado, setSplashTerminado] = useState(false)
   const [authTab, setAuthTab] = useState<AuthTab>('register')
   const [perfil, setPerfil] = useState<Perfil | null>(null)
   const [worker, setWorker] = useState<WorkerType | null>(null)
@@ -2649,8 +2709,7 @@ export default function App() {
   const needsWorker = current === 'worker' || current === 'request' || current === 'confirm'
 
   let content: ReactNode
-  if (booting) content = <BrandLoader />
-  else if (current === 'splash') content = <SplashScreen openAuth={t => { setAuthTab(t); go('auth') }} />
+  if (current === 'splash') content = <SplashScreen openAuth={t => { setAuthTab(t); go('auth') }} />
   else if (current === 'auth') content = <AuthScreen initialTab={authTab} go={go} onAuth={onAuth} />
   else if (current === 'reset') content = <ResetPasswordScreen onDone={finalizarRecuperacion} />
   else if (!perfil || (needsWorker && !worker) || (current === 'rate' && !pedidoRate) || (current === 'chat' && !pedidoChat)) content = <SplashScreen openAuth={t => { setAuthTab(t); go('auth') }} />
@@ -2686,6 +2745,8 @@ export default function App() {
         <LiveCtx.Provider value={{ version: live.version, pendientes: live.pendientes, conectado: live.conectado, rol: perfil?.rol ?? null }}>
           <div className="flex-1 min-h-0 overflow-hidden"><Boundary>{content}</Boundary></div>
         </LiveCtx.Provider>
+        {/* El splash tapa la app hasta que el logo termina de animarse. */}
+        {!splashTerminado && <BootSplash appReady={!booting} onDone={() => setSplashTerminado(true)} />}
         {live.aviso && (
           <button key={live.aviso.id} role="status" aria-live="polite" className="toast-in absolute left-3 right-3 z-50 flex items-center gap-3 px-4 py-3.5 rounded-2xl text-left"
             style={{ top: 'max(12px, env(safe-area-inset-top))', backgroundColor: N, color: W, border: `1px solid ${G}`, boxShadow: '0 12px 32px rgba(0,0,50,0.35)' }}

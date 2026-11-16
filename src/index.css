@@ -142,13 +142,51 @@ textarea::placeholder {
 /* Espacio inferior que respeta la barra de gestos / home indicator */
 .pb-safe { padding-bottom: max(20px, calc(env(safe-area-inset-bottom) + 8px)); }
 
-/* Logo de carga: latido suave (se desactiva con "reducir movimiento") */
-@keyframes logo-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .7; transform: scale(0.97); } }
-.logo-pulse { animation: logo-pulse 1.6s ease-in-out infinite; }
+/* ── Splash de arranque: fondo de marca + logo animado encima ──────────────
+   El MP4 original trae el logo sobre un azul marino opaco, así que tapaba el
+   fondo. Al archivo se le restó ese azul (queda negro puro) y aquí se compone
+   con `screen`: el negro desaparece y el logo se suma a la foto como luz.
+   `isolation: isolate` limita la mezcla a este contenedor (no toca la app). */
+.boot-splash {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  overflow: hidden;
+  isolation: isolate;
+  background-color: var(--navy);
+  /* `cqmin` permite escalar el logo respecto al contenedor y no al viewport
+     (en escritorio la app se ve dentro de un marco de 430 px). */
+  container-type: size;
+  transition: opacity .34s ease;
+}
+.boot-splash[data-done='true'] { opacity: 0; pointer-events: none; }
 
-/* Entrada del splash: solo opacidad y un desplazamiento corto (no retrasa la carga) */
-@keyframes splash-in { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
-.splash-in { animation: splash-in .38s cubic-bezier(.22,.8,.3,1) both; }
+/* La foto siempre cubre la pantalla completa, en vertical y en horizontal. */
+.boot-splash-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+/* El logo se centra y escala con el lado corto: se ve igual de bien en un
+   móvil vertical que en horizontal o en una tablet. */
+.boot-splash-logo {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  height: 78cqmin;
+  width: auto;
+  max-width: 92%;
+  mix-blend-mode: screen;
+}
+/* Navegadores sin unidades de contenedor: se usa el alto disponible. */
+@supports not (height: 1cqmin) {
+  .boot-splash-logo { height: 62%; }
+}
 
 /* Diálogo "¿Recibiste el pago?" */
 @keyframes dialog-in { from { opacity: 0; transform: translateY(18px) scale(.97); } to { opacity: 1; transform: none; } }

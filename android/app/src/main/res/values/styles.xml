@@ -17,7 +17,15 @@
 
 
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
-        <!-- Splash nativo: fondo de marca, icono de la app y tema al que se pasa después. -->
+        <!--
+          Splash nativo. Muestra el MISMO fondo de marca del splash web
+          (@drawable/splash, ya recortado a pantalla completa por densidad y
+          orientación), así que al abrir la app lo primero que se ve es el fondo.
+
+          El logo animado NO va aquí: lo dibuja el splash web (React) encima del
+          mismo fondo, para que la animación empiece desde el primer fotograma
+          sin que se vea un salto entre el splash nativo y el de la app.
+        -->
         <item name="windowSplashScreenBackground">@color/splashBackground</item>
         <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
         <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
