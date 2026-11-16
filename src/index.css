@@ -181,8 +181,13 @@ textarea::placeholder {
   height: 78cqmin;
   width: auto;
   max-width: 92%;
+  background-color: transparent;
   mix-blend-mode: screen;
+  /* Oculto hasta que la reproducción arranca: un <video> pausado se pinta igual
+     y su primer cuadro se veía como una imagen estática antes de la animación. */
+  opacity: 0;
 }
+.boot-splash-logo[data-frame='true'] { opacity: 1; }
 /* Navegadores sin unidades de contenedor: se usa el alto disponible. */
 @supports not (height: 1cqmin) {
   .boot-splash-logo { height: 62%; }

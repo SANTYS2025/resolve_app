@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Icono vacío del splash nativo.
+  Android 12+ centra `windowSplashScreenAnimatedIcon` sobre el fondo del splash.
+  Al dejarlo transparente no se muestra ninguna imagen estática (antes asomaba
+  el icono de la app) y la primera imagen visible es la animación del logo.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@android:color/transparent" />
+</shape>

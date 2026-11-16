@@ -254,6 +254,10 @@ function BootSplash({ appReady, onDone }: { appReady: boolean; onDone: () => voi
   const video = useRef<HTMLVideoElement>(null)
   // `animVista` = el logo ya se reprodujo completo (o se dio por visto).
   const [animVista, setAnimVista] = useState(false)
+  // `reproduciendo` = el video ya arrancó de verdad. Hasta ese momento el logo
+  // queda oculto para que no se vea su primer cuadro congelado antes de la
+  // animación (el video pausado se pinta igual, aunque no suene).
+  const [reproduciendo, setReproduciendo] = useState(false)
   const [saliendo, setSaliendo] = useState(false)
   const terminado = useRef(false)
   // `onDone` cambia de identidad en cada render de App; guardarlo en una ref
@@ -263,9 +267,18 @@ function BootSplash({ appReady, onDone }: { appReady: boolean; onDone: () => voi
 
   useEffect(() => {
     const id = window.setTimeout(() => setAnimVista(true), SPLASH_MAX_MS)
-    // Se pide el play explícitamente por si el navegador ignora `autoPlay`.
-    void video.current?.play().catch(() => {})
-    return () => window.clearTimeout(id)
+    const v = video.current
+    if (!v) return () => window.clearTimeout(id)
+    // Se pide el play en cuanto hay datos (por si el navegador ignora
+    // `autoPlay`). Si el autoplay está bloqueado no hay animación posible:
+    // se deja al menos el cuadro fijo para no mostrar el fondo vacío.
+    const arrancar = () => { void v.play().catch(() => setReproduciendo(true)) }
+    if (v.readyState >= 2) arrancar()
+    else v.addEventListener('loadeddata', arrancar, { once: true })
+    return () => {
+      window.clearTimeout(id)
+      v.removeEventListener('loadeddata', arrancar)
+    }
   }, [])
 
   useEffect(() => {
@@ -282,12 +295,14 @@ function BootSplash({ appReady, onDone }: { appReady: boolean; onDone: () => voi
       <video
         ref={video}
         className="boot-splash-logo"
+        data-frame={reproduciendo ? 'true' : 'false'}
         src={LOGO_ANIMADO}
         muted
         playsInline
         autoPlay
         preload="auto"
         aria-hidden="true"
+        onPlaying={() => setReproduciendo(true)}
         onEnded={() => setAnimVista(true)}
         onError={() => setAnimVista(true)}
       />

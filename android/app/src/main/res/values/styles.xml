@@ -25,9 +25,14 @@
           El logo animado NO va aquí: lo dibuja el splash web (React) encima del
           mismo fondo, para que la animación empiece desde el primer fotograma
           sin que se vea un salto entre el splash nativo y el de la app.
+
+          El icono del sistema va vacío a propósito: Android 12+ dibuja el icono
+          de la app en el centro y eso se veía como una imagen estática justo
+          antes de la animación. Con un drawable transparente el arranque nativo
+          es solo color de marca y la primera imagen es el logo animado.
         -->
         <item name="windowSplashScreenBackground">@color/splashBackground</item>
-        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icono_vacio</item>
         <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
         <!-- Compatibilidad con versiones anteriores a Android 12. -->
         <item name="android:background">@drawable/splash</item>
