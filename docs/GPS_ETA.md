@@ -99,6 +99,27 @@ No se guarda la ubicación del cliente en la base.
 - El envío está limitado por tiempo y distancia.
 - El cliente no puede leer posiciones históricas ni de otros servicios.
 
+### 8.1 Límite conocido: solo primer plano
+
+La app usa la geolocalización del WebView (`navigator.geolocation.watchPosition`),
+así que **el envío se detiene cuando Android suspende el WebView**: al cerrar la
+app, deslizarla desde “recientes” o dejarla mucho tiempo en segundo plano.
+
+Decisión de producto: **no se añadió un plugin de ubicación en segundo plano**
+(son plugins de terceros con mantenimiento irregular y permisos adicionales de
+Play Store). En su lugar:
+
+- El técnico ve un aviso persistente en la tarjeta de ubicación: “El envío
+  funciona solo con la app abierta…”.
+- El cliente ve “Sin señal” y la última ubicación conocida (sección 6), nunca
+  una ETA inventada.
+- El botón “Abrir ubicación en el mapa” sigue disponible con la última posición.
+
+Si en el futuro se requiere seguimiento continuo, la vía correcta es un
+servicio nativo en Android con `FOREGROUND_SERVICE_LOCATION`, notificación
+persistente y una política de privacidad que lo declare. No basta con cambiar
+el plugin de JavaScript.
+
 ## 9. Pruebas
 
 - `tests/geo.test.ts`: distancia, ETA, umbrales de señal y casos sin datos.

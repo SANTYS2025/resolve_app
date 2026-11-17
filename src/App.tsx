@@ -1,4 +1,4 @@
-import { Component, createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { Component, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { Capacitor } from '@capacitor/core'
@@ -15,7 +15,7 @@ import type { IconoMaterialNombre } from './components/IconoMaterial'
 import { MetodoPagoLogo } from './components/MetodoPagoLogo'
 import { supabase } from './lib/supabase'
 import {
-  aceptarSolicitud, calificarSolicitud, cambiarEstado, completarSolicitud, confirmarTecnico, crearSolicitud, ensurePerfil, enviarMensaje, errMsg, fmt, getBarrios, getCategorias, getEstadoSolicitud,
+  aceptarSolicitud, calificarSolicitud, cambiarEstado, completarSolicitud, completarSolicitudConPago, confirmarTecnico, crearSolicitud, ensurePerfil, enviarMensaje, errMsg, fmt, getBarrios, getCategorias, getEstadoSolicitud,
   getHistorial, getDisponibilidades, getEstadoAprobacion, getMiCuentaBancaria, getMiFotoTecnico, getMiTecnicoId, getMiVerificacion, getPedidos, getTecnicos, getTecnicoPublico,
   esCorreo, guardarCuentaBancaria, guardarDiagnostico, guardarGenero, inferirGenero, iniciarDesplazamiento, marcarLlegada, normCel, registrarMetodoPago, registrarTecnico,
   soloDigitos, soloDireccion, soloNombre, urlGoogleMaps, useData,
@@ -23,10 +23,10 @@ import {
 import type { Barrio, Categoria, CuentaBancaria, Disponibilidad, Genero, Pedido, Perfil, Rol, SolicitudEvento, WorkerType } from './lib/api'
 import { evaluarAccesoChat, mostrarBotonChat, validarMensaje, MAX_MENSAJE } from './lib/chat'
 import {
-  METODOS, etiquetaEstadoPago, metodoDiferido, metodoHabilitado, metodoPagoInfo, puedeElegirMetodoPago,
-  resumenPagoTecnico, validarSeleccionMetodo,
+  METODOS, etiquetaEstadoPago, metodoDiferido, metodoHabilitado, metodoPagoInfo, puedeConfirmarPagoTecnico,
+  puedeElegirMetodoPago, resumenPagoTecnico, validarSeleccionMetodo,
 } from './lib/pagos'
-import type { MetodoPago } from './lib/pagos'
+import type { MetodoPago, PagoEstado } from './lib/pagos'
 import {
   ESTADOS_ACTIVOS_TECNICO, accionDelTecnico, clientePuedeCancelar, disponibilidadTecnico,
   esEnEspera, esperaConfirmacionCliente, filtrarSolicitudes, llegadaRegistrada, ordenarEnEspera,
@@ -35,11 +35,13 @@ import {
 import type { EstadoTecnico } from './lib/solicitudes'
 import { recomendarTecnicos } from './lib/recomendacion'
 import { useMensajesEnVivo, useSolicitudesEnVivo } from './lib/realtime'
+import type { Aviso } from './lib/realtime'
 import { usePresenciaTecnico } from './lib/presencia'
 import type { PresenciaTecnico } from './lib/presencia'
 import { subirAvatarTecnico } from './lib/avatares'
 import { registrarPagoInterno } from './lib/transacciones'
-import { registrarPush } from './lib/push'
+import { escucharAperturaPush, registrarPush } from './lib/push'
+import type { AvisoPush } from './lib/push'
 import { ARRANQUE_FRIO, cerrarSesion, limpiarSesionDeArranque } from './lib/sesion'
 import { esEnlaceRecuperacion, mensajeErrorRecuperacion, validarCorreoRecuperacion, validarNuevaPassword } from './lib/auth'
 import { geocodificarInversa, mensajeUbicacion, obtenerUbicacionActual } from './lib/geocodificacion'
@@ -48,6 +50,9 @@ import {
   PortfolioScreen, RastreoUbicacion, ReferralsScreen, ReportarProblemaBox, ResetPasswordScreen,
   TransactionsScreen,
 } from './features/Extras'
+import { AceptoLegal, EliminarCuentaBox, LegalScreen } from './features/Legal'
+import { VERSION_LEGAL } from './content/legal'
+import { capturarError, identificarUsuario, limpiarUsuario } from './lib/observabilidad'
 
 // Paleta derivada del logo (muestreo de píxeles): fondo #000032, verde #2EDF2D.
 // GD = verde oscuro SOLO para texto sobre blanco (el verde del logo da contraste 1.8:1, insuficiente).
@@ -58,7 +63,7 @@ const INPUT = 'w-full px-4 min-h-[48px] py-3 text-base rounded-2xl border outlin
 const INPUT_STYLE = { borderColor: BD, backgroundColor: W }
 
 type Screen = 'splash' | 'auth' | 'home' | 'worker' | 'request' | 'confirm' | 'rate' | 'orders' | 'done' | 'pending' | 'profile' | 'chat' | 'v1' | 'v2' | 'v3'
-  | 'help' | 'transactions' | 'notifications' | 'referrals' | 'agenda' | 'portfolio' | 'earnings' | 'reset'
+  | 'help' | 'transactions' | 'notifications' | 'referrals' | 'agenda' | 'portfolio' | 'earnings' | 'reset' | 'legal'
 type AuthTab = 'login' | 'register'
 type NavFn = (s: Screen) => void
 type Draft = { name: string; phone: string; cedula: string; genero: Genero | '' }
@@ -421,7 +426,10 @@ function BottomNav({ active, go }: { active: Screen; go: NavFn }) {
 class Boundary extends Component<{ children: ReactNode }, { err: boolean }> {
   state = { err: false }
   static getDerivedStateFromError() { return { err: true } }
-  componentDidCatch(e: unknown) { console.error(e) }
+  componentDidCatch(e: unknown, info: { componentStack?: string | null }) {
+    // Se reporta con la pila de componentes para poder reproducir la pantalla.
+    capturarError(e, { origen: 'ErrorBoundary', pila: info.componentStack?.slice(0, 900) ?? '' })
+  }
   render() {
     if (!this.state.err) return this.props.children
     return (
@@ -471,6 +479,7 @@ function AuthScreen({ initialTab, go, onAuth }: { initialTab: AuthTab; go: NavFn
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [notice, setNotice] = useState('')
+  const [acepto, setAcepto] = useState(false)
 
   /**
    * Recuperación de contraseña: Supabase envía un enlace mágico. Al abrirlo,
@@ -506,13 +515,20 @@ function AuthScreen({ initialTab, go, onAuth }: { initialTab: AuthTab; go: NavFn
       if (!role) return setMessage('Selecciona si buscas un técnico o si eres trabajador.')
       const errPass = validarNuevaPassword(form.password, form.password2)
       if (errPass) return setMessage(errPass)
+      if (!acepto) return setMessage('Debes aceptar los términos, la política de privacidad y la autorización de tratamiento de datos.')
     }
 
     setLoading(true)
     try {
       const res = tab === 'register'
         ? await supabase.auth.signUp({ email, password: form.password,
-            options: { data: { nombre: name, rol: role === 'worker' ? 'tecnico' : 'cliente' } } })
+            options: { data: {
+              nombre: name,
+              rol: role === 'worker' ? 'tecnico' : 'cliente',
+              acepto_terminos: true,
+              acepto_terminos_en: new Date().toISOString(),
+              version_legal: VERSION_LEGAL,
+            } } })
         : await supabase.auth.signInWithPassword({ email, password: form.password })
       if (res.error) throw res.error
 
@@ -607,6 +623,10 @@ function AuthScreen({ initialTab, go, onAuth }: { initialTab: AuthTab; go: NavFn
               ))}
             </div>
           </Field>
+        )}
+
+        {tab === 'register' && (
+          <AceptoLegal acepto={acepto} onCambio={setAcepto} onAbrirLegal={() => go('legal')} />
         )}
 
         <ErrorBox msg={message} />
@@ -1013,8 +1033,18 @@ function RequestScreen({ worker: w, perfil, go, onCreated }: { worker: WorkerTyp
           <input type="date" value={form.date} min={todayLocal()} max={fechaMax()} onChange={e => setForm({ ...form, date: e.target.value })} className={INPUT} style={INPUT_STYLE} />
         </Field>
         <Field label="Describe el trabajo o problema *">
-          <textarea rows={4} maxLength={1000} value={form.desc} onChange={e => setForm({ ...form, desc: e.target.value })}
+          <textarea rows={4} maxLength={1000} value={form.desc}
+            onChange={e => { setForm({ ...form, desc: e.target.value }); if (message) setMessage('') }}
+            placeholder="Describe qué necesitas reparar o revisar (mínimo 10 caracteres)…"
             className={`${INPUT} resize-none`} style={INPUT_STYLE} />
+          <div className="flex items-center justify-between text-xs mt-1">
+            <span style={{ color: form.desc.trim().length < 10 ? '#DC2626' : GD, fontWeight: 600 }}>
+              {form.desc.trim().length < 10
+                ? `Mínimo 10 caracteres (${form.desc.trim().length}/10)`
+                : 'Descripción lista ✓'}
+            </span>
+            <span style={{ color: MU }}>{form.desc.length}/1000</span>
+          </div>
         </Field>
         <Field label="¿Cómo vas a pagar? *">
           <MetodoPagoGrid sel={metodoPago} onSelect={m => { setMetodoPago(m); setMessage('') }} />
@@ -1031,10 +1061,10 @@ function RequestScreen({ worker: w, perfil, go, onCreated }: { worker: WorkerTyp
         </Field>
         <div className="flex items-center gap-2.5 px-3.5 py-3 rounded-2xl" style={{ backgroundColor: GL, border: `1px solid ${G}40` }}>
           <span style={{ color: '#065F46' }}><IconoMaterial name="payments" size={18} /></span>
-          <span className="text-xs" style={{ color: '#065F46' }}>Tarifa de referencia: <strong>{fmt(w.priceMin)} – {fmt(w.priceMax)} COP</strong>. El precio final lo acuerdas con el técnico.</span>
+          <span className="text-xs" style={{ color: '#065F46' }}>Tarifa de referencia: <strong>{fmt(w.priceMin)} – {fmt(w.priceMax)} COP</strong> (Tope máx: <strong>{fmt(w.priceMax)} COP</strong>). El precio final lo acuerdas con el técnico.</span>
         </div>
         <ErrorBox msg={message} />
-        <PrimaryBtn onClick={enviar} disabled={loading}>{loading ? 'Enviando…' : 'Enviar solicitud'}</PrimaryBtn>
+        <PrimaryBtn onClick={enviar} disabled={loading || form.desc.trim().length < 10}>{loading ? 'Enviando…' : 'Enviar solicitud'}</PrimaryBtn>
       </div>
     </div>
   )
@@ -1069,6 +1099,26 @@ function ConfirmScreen({ worker: w, metodoPago, go, enEspera = false }: { worker
               <p className="text-xs" style={{ color: MU }}>{pago?.descripcion ?? 'Podrás elegirlo más adelante.'}</p>
             </div>
           </div>
+        </div>
+        <div className="mt-3 w-full rounded-2xl p-4 text-left" style={{ backgroundColor: W, border: `1px solid ${BD}` }}>
+          <div className="flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wider mb-1" style={{ color: GD }}>
+            <IconoMaterial name="payments" size={14} />
+            Tarifa del servicio
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-extrabold" style={{ color: N }}>{fmt(w.priceMin)} – {fmt(w.priceMax)} COP</p>
+              <p className="text-xs" style={{ color: MU }}>Rango estimado de referencia</p>
+            </div>
+            <div className="text-right">
+              <span className="text-[11px] font-bold px-2 py-0.5 rounded-md" style={{ backgroundColor: '#F3F4F6', color: '#4B5563' }}>
+                Tope máx: {fmt(w.priceMax)}
+              </span>
+            </div>
+          </div>
+          <p className="text-[11px] mt-2 leading-relaxed" style={{ color: MU }}>
+            Esta cifra no es un cobro fijo inmediato: representa el rango y tope de cotización. La tarifa definitiva se acuerda directamente con el técnico tras la revisión en el domicilio.
+          </p>
         </div>
         {enEspera && (
           <div className="mt-3 w-full rounded-2xl p-4 text-left" style={{ backgroundColor: '#FEF3C7', border: '1px solid #F59E0B70' }}>
@@ -1174,8 +1224,8 @@ function DatosServicio({ p, onNavigate }: { p: Pedido; onNavigate?: () => void }
       <FilaDato l="Fecha">{new Date(p.fecha + 'T00:00:00').toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}</FilaDato>
       <FilaDato l="Servicio">{p.descripcion}</FilaDato>
       {p.precioFinal != null
-        ? <FilaDato l="Precio final">{fmt(p.precioFinal)}</FilaDato>
-        : p.precioMin != null && p.precioMax != null && <FilaDato l="Referencia">{fmt(p.precioMin)} – {fmt(p.precioMax)}</FilaDato>}
+        ? <FilaDato l="Tarifa acordada">{fmt(p.precioFinal)}</FilaDato>
+        : p.precioMin != null && p.precioMax != null && <FilaDato l="Rango estimado">{fmt(p.precioMin)} – {fmt(p.precioMax)} (Tope máx: {fmt(p.precioMax)})</FilaDato>}
       {p.direccion && (
         onNavigate ? (
           /*
@@ -1386,10 +1436,25 @@ function PagoBox({ pedido, onSaved, onAbrirChat }: { pedido: Pedido; onSaved: ()
       <div className="flex items-start justify-between gap-2 mb-1">
         <div>
           <div className="text-xs font-extrabold uppercase tracking-wider" style={{ color: GD }}>Pago del servicio</div>
-          <div className="text-lg font-extrabold mt-0.5" style={{ color: N }}>
-            {total != null ? fmt(total) : 'Precio a acordar'}
-          </div>
-          <div className="text-[11px]" style={{ color: MU }}>{pedido.precioFinal != null ? 'Total acordado con el técnico' : 'Tarifa de referencia'}</div>
+          {pedido.precioFinal != null ? (
+            <>
+              <div className="text-lg font-extrabold mt-0.5" style={{ color: N }}>
+                {total != null ? fmt(total) : 'Precio a acordar'}
+              </div>
+              <div className="text-[11px] font-bold" style={{ color: GD }}>Tarifa acordada con el técnico</div>
+            </>
+          ) : (
+            <>
+              <div className="text-lg font-extrabold mt-0.5" style={{ color: N }}>
+                {pedido.precioMin != null && pedido.precioMax != null
+                  ? `${fmt(pedido.precioMin)} – ${fmt(pedido.precioMax)}`
+                  : total != null ? fmt(total) : 'Precio a acordar'}
+              </div>
+              <div className="text-[11px] font-medium leading-tight" style={{ color: MU }}>
+                Tope máximo de cotización: {total != null ? fmt(total) : 'N/A'} COP (la tarifa definitiva se acuerda con el técnico)
+              </div>
+            </>
+          )}
           {descuento > 0 && (
             <div className="text-[11px] font-bold mt-0.5" style={{ color: GD }}>
               Cupón{pedido.cuponCodigo ? ` ${pedido.cuponCodigo}` : ''} · −{fmt(descuento)}
@@ -1468,8 +1533,7 @@ function PagoResumenTecnico({ p, onSaved }: { p: Pedido; onSaved?: () => void })
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const [ok, setOk] = useState('')
-  const puedeConfirmar = p.estado === 'completada' && p.pagoEstado !== 'pagado' &&
-    p.pagoEstado !== 'cancelado' && metodoHabilitado(p.metodoPago)
+  const puedeConfirmar = puedeConfirmarPagoTecnico(p.estado, p.pagoEstado, p.metodoPago)
 
   const confirmar = async () => {
     if (!p.metodoPago) return setMsg('El cliente aún no ha elegido método de pago.')
@@ -1545,7 +1609,16 @@ function FinalizarSolicitudBox({ p, busy, onFinalizar }: { p: Pedido; busy: bool
     if (yaPagado) { setConfirmado(true); setRespondioNo(false) }
   }, [yaPagado])
 
-  const habilitado = puedeFinalizarSolicitud(p.estado, confirmado)
+  /*
+   * Para cerrar hace falta un pago ya confirmado o un método habilitado que el
+   * servidor registrará en la misma transacción (`completar_solicitud_con_pago`).
+   * Sin método válido el cierre queda bloqueado: el servidor ya no permite
+   * completar sin pago.
+   */
+  const pagoCancelado = p.pagoEstado === 'cancelado'
+  const metodoListo = yaPagado || (!pagoCancelado && metodoHabilitado(p.metodoPago))
+  const habilitado = puedeFinalizarSolicitud(p.estado, confirmado) && metodoListo
+  const nombreMetodo = metodoPagoInfo(p.metodoPago)?.nombre ?? 'el método elegido'
 
   const responder = (si: boolean) => {
     setDialogo(false)
@@ -1557,15 +1630,23 @@ function FinalizarSolicitudBox({ p, busy, onFinalizar }: { p: Pedido; busy: bool
     <div className="mt-3 rounded-2xl p-3.5" style={{ backgroundColor: W, border: `1px solid ${BD}` }}>
       <div className="text-xs font-extrabold uppercase tracking-wider mb-1" style={{ color: N }}>Cierre del servicio</div>
       <p className="text-xs leading-relaxed" style={{ color: MU }}>
-        {habilitado
-          ? 'Pago confirmado. Puedes cerrar la solicitud y quedar disponible para nuevos servicios.'
-          : respondioNo
-            ? 'No confirmaste el pago. La solicitud seguirá abierta hasta que lo confirmes.'
-            : 'Antes de cerrar, confirma que recibiste el pago del cliente.'}
+        {!metodoListo
+          ? pagoCancelado
+            ? 'El pago de este servicio fue cancelado. No se puede cerrar la solicitud hasta resolverlo.'
+            : 'El cliente todavía no tiene un método de pago habilitado. Pídele que elija Nequi, Bancolombia, Daviplata o efectivo antes de cerrar.'
+          : habilitado
+            ? yaPagado
+              ? 'Pago confirmado. Puedes cerrar la solicitud y quedar disponible para nuevos servicios.'
+              : `Pago confirmado con ${nombreMetodo}. Al finalizar, quedará registrado y podrás recibir nuevos servicios.`
+            : respondioNo
+              ? 'No confirmaste el pago. La solicitud seguirá abierta hasta que lo confirmes.'
+              : 'Antes de cerrar, confirma que recibiste el pago del cliente.'}
       </p>
 
       <div className="flex gap-2 mt-3 flex-wrap">
-        {habilitado ? (
+        {!metodoListo ? (
+          <AccionBtn label="Finalizar solicitud" disabled onClick={() => {}} />
+        ) : habilitado ? (
           <AccionBtn primary label={busy ? 'Finalizando…' : 'Finalizar solicitud'} disabled={busy}
             onClick={() => { void onFinalizar() }} />
         ) : respondioNo ? (
@@ -1588,7 +1669,9 @@ function FinalizarSolicitudBox({ p, busy, onFinalizar }: { p: Pedido; busy: bool
           <div className="relative w-full max-w-[380px] rounded-3xl p-5 dialog-in" style={{ backgroundColor: W, boxShadow: '0 18px 50px rgba(0,0,50,0.35)' }}>
             <h4 id={`pago-${p.id}`} className="text-lg font-extrabold" style={{ color: N }}>¿Recibiste el pago?</h4>
             <p className="text-sm mt-1.5 leading-relaxed" style={{ color: MU }}>
-              Confirma solo si el cliente ya te pagó. Al finalizar, la solicitud se cierra y quedas disponible para nuevos servicios.
+              {yaPagado
+                ? 'El pago ya está confirmado. Al finalizar, la solicitud se cierra y quedas disponible para nuevos servicios.'
+                : `Al confirmar, registraremos el pago con ${nombreMetodo} y cerraremos la solicitud. Hazlo solo si el cliente ya te pagó.`}
             </p>
             <div className="flex gap-2 mt-4">
               <button onClick={() => responder(true)} className="flex-1 min-h-[48px] px-4 rounded-2xl text-sm font-extrabold"
@@ -1755,8 +1838,9 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas', presencia 
   presencia?: PresenciaTecnico
 }) {
   const live = useContext(LiveCtx)
-  // Se recarga sola cada vez que Realtime reporta un cambio (live.version)
-  const pedidos = useData(() => getPedidos(perfil), [perfil.id, perfil.rol, live.version], [] as Pedido[])
+  const [pedidosData, setPedidosData] = useState<Pedido[]>([])
+  const [cargando, setCargando] = useState(true)
+  const [errorCarga, setErrorCarga] = useState<string | null>(null)
   const [busy, setBusy] = useState<number | null>(null)
   const [message, setMessage] = useState('')
   const [okMessage, setOkMessage] = useState('')
@@ -1764,6 +1848,100 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas', presencia 
   const [nuevos, setNuevos] = useState<Set<number>>(new Set())
   const vistos = useRef<Set<number> | null>(null)
   const esTec = perfil.rol === 'tecnico'
+
+  const cargarPedidos = useCallback(async (silencioso = false) => {
+    if (!silencioso) {
+      setCargando(true)
+      setErrorCarga(null)
+    }
+    try {
+      const data = await getPedidos(perfil)
+      setPedidosData(data)
+    } catch (e) {
+      console.error(e)
+      if (!silencioso) setErrorCarga(errMsg(e))
+    } finally {
+      if (!silencioso) setCargando(false)
+    }
+  }, [perfil])
+
+  // Carga inicial y suscripción a cambios en tiempo real vía Supabase Realtime
+  useEffect(() => {
+    let montado = true
+    cargarPedidos(false)
+
+    let canal: ReturnType<typeof supabase.channel> | null = null
+
+    async function suscribirRealtime() {
+      let filtroTec: number | null = null
+      if (perfil.rol === 'tecnico') {
+        filtroTec = await getMiTecnicoId(perfil.id)
+        if (!montado) return
+      }
+
+      const filtro = filtroTec
+        ? `tecnico_id=eq.${filtroTec}`
+        : `cliente_id=eq.${perfil.id}`
+
+      canal = supabase
+        .channel(`solicitudes-orders-${perfil.id}-${Date.now()}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'solicitudes', filter: filtro },
+          (payload) => {
+            if (!montado) return
+            if (payload.eventType === 'UPDATE') {
+              const row = payload.new as Record<string, unknown>
+              setPedidosData(prev =>
+                prev.map(p => {
+                  if (p.id !== row.id) return p
+                  return {
+                    ...p,
+                    estado: (row.estado as string) ?? p.estado,
+                    pagoEstado: (row.pago_estado as PagoEstado) ?? p.pagoEstado,
+                    metodoPago: (row.metodo_pago as MetodoPago) ?? p.metodoPago,
+                    diagnostico: row.diagnostico !== undefined ? (row.diagnostico as string | null) : p.diagnostico,
+                    diagnosticoEn: row.diagnostico_en !== undefined ? (row.diagnostico_en as string | null) : p.diagnosticoEn,
+                    precioFinal: row.precio_final !== undefined ? (row.precio_final as number | null) : p.precioFinal,
+                    latitud: row.latitud != null ? Number(row.latitud) : p.latitud,
+                    longitud: row.longitud != null ? Number(row.longitud) : p.longitud,
+                    direccion: (row.direccion as string | null) ?? p.direccion,
+                  }
+                })
+              )
+              cargarPedidos(true)
+            } else if (payload.eventType === 'INSERT') {
+              cargarPedidos(true)
+            } else if (payload.eventType === 'DELETE') {
+              const oldId = (payload.old as { id?: number })?.id
+              if (oldId) {
+                setPedidosData(prev => prev.filter(p => p.id !== oldId))
+              } else {
+                cargarPedidos(true)
+              }
+            }
+          }
+        )
+        .subscribe()
+    }
+
+    suscribirRealtime()
+
+    return () => {
+      montado = false
+      if (canal) {
+        supabase.removeChannel(canal)
+      }
+    }
+  }, [cargarPedidos, perfil.id, perfil.rol])
+
+  // Refresca silenciosamente si el contexto live reporta nueva versión externa
+  useEffect(() => {
+    if (live.version > 0) {
+      cargarPedidos(true)
+    }
+  }, [live.version, cargarPedidos])
+
   /*
    * Las dos listas del técnico son excluyentes:
    *   · vigentes  → todo lo que sigue en curso.
@@ -1771,11 +1949,11 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas', presencia 
    * Una solicitud terminada ya no puede aparecer en "Solicitudes vigentes".
    */
   const lista = useMemo(
-    () => !esTec ? pedidos.data : filtrarSolicitudes(pedidos.data, modo === 'completadas' ? 'historial' : 'vigentes'),
-    [pedidos.data, esTec, modo],
+    () => !esTec ? pedidosData : filtrarSolicitudes(pedidosData, modo === 'completadas' ? 'historial' : 'vigentes'),
+    [pedidosData, esTec, modo],
   )
   // Disponibilidad derivada de las solicitudes activas, no de una columna que pueda quedar vieja.
-  const disponibilidad = useMemo(() => disponibilidadTecnico(pedidos.data), [pedidos.data])
+  const disponibilidad = useMemo(() => disponibilidadTecnico(pedidosData), [pedidosData])
   /*
    * El encabezado del técnico usa la misma autoridad que su perfil (presencia +
    * interruptor + servicio activo). Así "pausado" o "desconectado" nunca se
@@ -1802,7 +1980,7 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas', presencia 
    * El historial tiene su propia sección en la pestaña "Terminadas".
    */
   const elementos = useMemo<ElementoLista[]>(() => {
-    if (!esTec) return pedidos.data.map(p => ({ tipo: 'pedido' as const, p }))
+    if (!esTec) return pedidosData.map(p => ({ tipo: 'pedido' as const, p }))
     if (modo === 'completadas') {
       return [
         { tipo: 'seccion', titulo: 'SOLICITUDES TERMINADAS' },
@@ -1826,18 +2004,18 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas', presencia 
       filas.push(...nuevas.map(p => ({ tipo: 'pedido' as const, p })))
     }
     return filas
-  }, [esTec, modo, lista, pedidos.data])
+  }, [esTec, modo, lista, pedidosData])
 
   // Resalta unos segundos las solicitudes que acaban de aparecer (la primera carga no cuenta)
   useEffect(() => {
-    if (pedidos.loading) return
-    const ids = new Set(pedidos.data.map(p => p.id))
+    if (cargando) return
+    const ids = new Set(pedidosData.map(p => p.id))
     if (vistos.current) {
       const frescos = new Set([...ids].filter(id => !vistos.current!.has(id)))
       if (frescos.size) { setNuevos(frescos); setTimeout(() => setNuevos(new Set()), 5000) }
     }
     vistos.current = ids
-  }, [pedidos.data, pedidos.loading])
+  }, [pedidosData, cargando])
 
   const ejecutar = async (id: number, accion: AccionSolicitud) => {
     if (busy !== null) return // evita doble toque mientras llega la respuesta
@@ -1855,35 +2033,58 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas', presencia 
           if (estado === 'en_espera') {
             mensajeOk = 'Solicitud aceptada. Quedó en espera y se activará cuando termines el servicio actual.'
           }
+          setPedidosData(prev => prev.map(p => p.id === id ? { ...p, estado } : p))
           break
         }
-        case 'rechazar': await cambiarEstado(id, 'rechazada'); break
-        case 'cancelar': await cambiarEstado(id, 'cancelada'); break
-        case 'confirmar': await confirmarTecnico(id); break
-        case 'navegar': await iniciarDesplazamiento(id); break
-        case 'llegar': await marcarLlegada(id); break
+        case 'rechazar':
+          await cambiarEstado(id, 'rechazada')
+          setPedidosData(prev => prev.map(p => p.id === id ? { ...p, estado: 'rechazada' } : p))
+          break
+        case 'cancelar':
+          await cambiarEstado(id, 'cancelada')
+          setPedidosData(prev => prev.map(p => p.id === id ? { ...p, estado: 'cancelada' } : p))
+          break
+        case 'confirmar':
+          await confirmarTecnico(id)
+          setPedidosData(prev => prev.map(p => p.id === id ? { ...p, estado: 'confirmada' } : p))
+          break
+        case 'navegar':
+          await iniciarDesplazamiento(id)
+          setPedidosData(prev => prev.map(p => p.id === id ? { ...p, estado: 'en_camino' } : p))
+          break
+        case 'llegar':
+          await marcarLlegada(id)
+          setPedidosData(prev => prev.map(p => p.id === id ? { ...p, estado: 'llego' } : p))
+          break
         case 'completar': {
-          await completarSolicitud(id)
           /*
-           * El pago interno solo se puede registrar cuando la solicitud ya está
-           * `completada` (lo exige `registrar_pago_interno`). Por eso va después.
-           * Si falla, el cierre NO se revierte: el técnico queda libre igualmente
-           * y se le avisa para que lo revise.
+           * El servidor ya no permite cerrar sin pago (`completar_solicitud`
+           * exige `pago_estado = 'pagado'` y una transacción aprobada). Si el
+           * pago aún no está confirmado, `completar_solicitud_con_pago` lo
+           * registra y cierra en la misma transacción: si el pago falla, el
+           * servicio sigue abierto.
            */
-          const pedido = pedidos.data.find(x => x.id === id)
-          if (pedido?.metodoPago) {
-            try {
-              await registrarPagoInterno(id, pedido.metodoPago)
-            } catch (e) {
-              console.warn('No se pudo registrar el pago interno:', e)
-              setMessage(`La solicitud se cerró, pero no se pudo registrar el pago: ${errMsg(e)}`)
+          const pedido = pedidosData.find(x => x.id === id)
+          if (pedido?.pagoEstado === 'pagado') {
+            await completarSolicitud(id)
+            setPedidosData(prev => prev.map(p => p.id === id ? { ...p, estado: 'completada' } : p))
+          } else {
+            if (pedido?.pagoEstado === 'cancelado') {
+              throw new Error('El pago de este servicio fue cancelado. No se puede finalizar.')
             }
+            if (!pedido?.metodoPago || !metodoHabilitado(pedido.metodoPago)) {
+              throw new Error('El cliente debe elegir Nequi, Bancolombia, Daviplata o efectivo antes de finalizar el servicio.')
+            }
+            await completarSolicitudConPago(id, pedido.metodoPago)
+            setPedidosData(prev => prev.map(p => p.id === id ? { ...p, estado: 'completada', pagoEstado: 'pagado' } : p))
+            mensajeOk = 'Solicitud finalizada y pago registrado. Ya estás disponible para recibir nuevas solicitudes.'
           }
           break
         }
       }
       setOkMessage(mensajeOk)
-      pedidos.reload()
+      // Refresco silencioso en segundo plano sin pantalla de carga completa
+      cargarPedidos(true)
     }
     catch (e) { console.error(e); setMessage(errMsg(e)) }
     finally { setBusy(null) }
@@ -1913,7 +2114,7 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas', presencia 
         </div>
       </DarkHeader>
       <div className="flex-1 overflow-y-auto px-4 pt-4 pb-safe space-y-3" style={{ scrollbarWidth: 'none' }}>
-        {esTec && modo === 'activas' && !pedidos.loading && (
+        {esTec && modo === 'activas' && !cargando && (
           <div className="rounded-2xl px-4 py-3 flex items-center gap-3" style={{ backgroundColor: W, border: `1px solid ${BD}` }}>
             <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: ESTADO_UI[estadoPropio].dot }} />
             <div className="min-w-0">
@@ -1928,9 +2129,9 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas', presencia 
         )}
         <ErrorBox msg={message} />
         {okMessage && <ErrorBox msg={okMessage} ok />}
-        {pedidos.loading && lista.length === 0 && <Loading />}
-        {pedidos.error && <ErrorBox msg={pedidos.error} />}
-        {!pedidos.loading && !pedidos.error && lista.length === 0 && (
+        {cargando && lista.length === 0 && <Loading />}
+        {errorCarga && <ErrorBox msg={errorCarga} />}
+        {!cargando && !errorCarga && lista.length === 0 && (
           <p className="text-sm text-center py-10" style={{ color: MU }}>{vacio}</p>
         )}
         {elementos.map((el, i) => {
@@ -1946,7 +2147,7 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas', presencia 
           const accion = esTec ? accionDelTecnico(p.estado) : null
           // Dirección y contacto completos: después de aceptar (incluso si quedó en espera).
           const verDatos = esTec && ['aceptada', 'confirmada', 'en_camino', 'en_proceso', 'llego', 'completada', 'en_espera', 'confirmada_en_espera'].includes(p.estado)
-          const permisoAceptar = esTec && p.estado === 'pendiente' ? puedeAceptarSolicitud(pedidos.data, p.id) : null
+          const permisoAceptar = esTec && p.estado === 'pendiente' ? puedeAceptarSolicitud(pedidosData, p.id) : null
           const puedeEscribirChat = evaluarAccesoChat(p.estado).puedeEscribir
           return (
             <article key={p.id} className={`rounded-3xl p-4 ${nuevos.has(p.id) ? 'flash-in' : ''}`}
@@ -1984,8 +2185,8 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas', presencia 
                     </p>
                   )}
                   {p.precioFinal != null
-                    ? <div className="text-sm font-bold mt-2" style={{ color: GD }}>Precio final: {fmt(p.precioFinal)}</div>
-                    : p.precioMin != null && p.precioMax != null && <div className="text-xs mt-2" style={{ color: MU }}>Referencia: {fmt(p.precioMin)} – {fmt(p.precioMax)}</div>}
+                    ? <div className="text-sm font-bold mt-2" style={{ color: GD }}>Tarifa acordada: {fmt(p.precioFinal)}</div>
+                    : p.precioMin != null && p.precioMax != null && <div className="text-xs mt-2" style={{ color: MU }}>Rango de referencia: {fmt(p.precioMin)} – {fmt(p.precioMax)} (Tope máx: {fmt(p.precioMax)})</div>}
                 </>
               )}
 
@@ -1995,14 +2196,14 @@ function OrdersScreen({ perfil, go, onRate, onChat, modo = 'activas', presencia 
               {p.estado === 'en_camino' && <RastreoUbicacion pedido={p} perfil={perfil} />}
 
               {/* Técnico: tras aceptar escribe el diagnóstico; cliente: lo lee */}
-              {esTec && ['aceptada', 'confirmada', 'en_camino', 'en_proceso', 'llego'].includes(p.estado) && <DiagnosticoBox pedido={p} onSaved={pedidos.reload} />}
+              {esTec && ['aceptada', 'confirmada', 'en_camino', 'en_proceso', 'llego'].includes(p.estado) && <DiagnosticoBox pedido={p} onSaved={() => void cargarPedidos(true)} />}
               {(!esTec || p.estado === 'completada') && <DiagnosticoVista p={p} />}
               {esTec && p.estado === 'completada' && p.calificacionCliente && <CalificacionRecibida c={p.calificacionCliente} />}
 
               {/* Pago: el método elegido al crear la solicitud se muestra en todo el flujo */}
-              {!esTec && <PagoBox pedido={p} onSaved={pedidos.reload} onAbrirChat={() => abrirChat(p)} />}
+              {!esTec && <PagoBox pedido={p} onSaved={() => void cargarPedidos(true)} onAbrirChat={() => abrirChat(p)} />}
               {!esTec && p.estado === 'completada' && <ReportarProblemaBox pedido={p} />}
-              {esTec && <PagoResumenTecnico p={p} onSaved={pedidos.reload} />}
+              {esTec && <PagoResumenTecnico p={p} onSaved={() => void cargarPedidos(true)} />}
 
               {esTec && llegadaRegistrada(p.estado) && (
                 <div className="mt-3 flex items-center gap-2 rounded-2xl px-3.5 py-2.5 text-xs font-extrabold"
@@ -2345,10 +2546,11 @@ function CuentaBancariaBox({ perfil }: { perfil: Perfil }) {
 }
 
 /* ═════════ Perfil / sesión ═════════ */
-function ProfileScreen({ perfil, go, onLogout, presencia }: {
+function ProfileScreen({ perfil, go, onLogout, onCuentaEliminada, presencia }: {
   perfil: Perfil
   go: NavFn
   onLogout: () => Promise<void>
+  onCuentaEliminada: () => void
   presencia: PresenciaTecnico
 }) {
   const live = useContext(LiveCtx)
@@ -2445,6 +2647,7 @@ function ProfileScreen({ perfil, go, onLogout, presencia }: {
     { s: 'notifications', icon: 'notifications', label: 'Notificaciones', desc: 'Preferencias, bandeja y push del dispositivo.' },
     { s: 'referrals', icon: 'redeem', label: 'Invita y gana', desc: 'Tu código, recompensas y cobertura por barrio.' },
     { s: 'help', icon: 'support_agent', label: 'Ayuda y soporte', desc: 'Preguntas frecuentes y tickets.' },
+    { s: 'legal', icon: 'lock', label: 'Términos y privacidad', desc: 'Condiciones, privacidad y tratamiento de datos.' },
   ]
 
   return (
@@ -2532,6 +2735,7 @@ function ProfileScreen({ perfil, go, onLogout, presencia }: {
           ))}
         </Card>
         {perfil.rol === 'tecnico' && ver.data?.verificado && <CuentaBancariaBox perfil={perfil} />}
+        <EliminarCuentaBox onDeleted={onCuentaEliminada} />
         <SecondaryBtn tone="danger" disabled={busy} onClick={async () => { setBusy(true); await onLogout() }}>
           {busy ? 'Cerrando sesión…' : 'Cerrar sesión'}
         </SecondaryBtn>
@@ -2770,6 +2974,32 @@ export default function App() {
     })
     return () => { cancelado = true; void listener?.remove() }
   }, [])
+
+  /*
+   * Push nativo:
+   *  · registra el token cuando hay sesión (también al restaurarla), y
+   *  · si el usuario toca una notificación del sistema, abre Solicitudes (o la
+   *    bandeja de notificaciones cuando el aviso no está ligado a un servicio).
+   */
+  const accionPushRef = useRef<(aviso: AvisoPush) => void>(() => {})
+  accionPushRef.current = aviso => {
+    if (!perfil) return
+    go(aviso.solicitudId ? 'orders' : 'notifications')
+  }
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return
+    let cancelado = false
+    let limpiar: (() => void) | undefined
+    void escucharAperturaPush(aviso => { if (!cancelado) accionPushRef.current(aviso) })
+      .then(fn => { if (cancelado) fn(); else limpiar = fn })
+      .catch(() => {})
+    return () => { cancelado = true; limpiar?.() }
+  }, [])
+  useEffect(() => {
+    if (!perfil) return
+    // El registro de push es opcional (solo app nativa); no bloquea el ingreso.
+    registrarPush().catch(e => console.warn('Push no disponible:', e))
+  }, [perfil?.id])
   // Un técnico sin aprobar no se suscribe a solicitudes
   const live = useSolicitudesEnVivo(perfil && perfil.rol === 'tecnico' && !aprobado ? null : perfil)
   const { limpiarPendientes } = live
@@ -2784,6 +3014,12 @@ export default function App() {
    */
   const presencia = usePresenciaTecnico(perfil)
   useEffect(() => { void presencia.refrescar() }, [live.version, presencia.refrescar])
+
+  // Monitoreo: los errores se asocian al id interno del usuario, nunca a su correo.
+  useEffect(() => {
+    if (perfil) identificarUsuario(perfil.id, perfil.rol)
+    else limpiarUsuario()
+  }, [perfil?.id, perfil?.rol])
 
   // Restaura la sesión al abrir la app y reacciona al cierre de sesión.
   //
@@ -2857,8 +3093,8 @@ export default function App() {
   const onAuth = async (p: Perfil) => {
     const { dest, aprobado: ok } = await destinoInicial(p)
     setPerfil(p); setAprobado(ok); resetNav(dest)
-    // El registro de push es opcional (solo app nativa); no bloquea el ingreso.
-    registrarPush().catch(e => console.warn('Push no disponible:', e))
+    // El token push lo registra el efecto que observa `perfil.id` (cubre login y
+    // restauración de sesión, sin pedir permiso dos veces).
   }
   // Botón "Revisar estado": vuelve a consultar y, si ya fue aprobado, entra directo a Solicitudes
   const revisarAprobacion = async (): Promise<boolean> => {
@@ -2872,7 +3108,13 @@ export default function App() {
     // mostrarte disponible antes de invalidar el token.
     await presencia.desconectar()
     await cerrarSesion()
+    limpiarUsuario()
     // Si la red falló, `signOut` no emite SIGNED_OUT: limpiamos la UI aquí.
+    setPerfil(null); setWorker(null); setPedidoRate(null); setPedidoChat(null); setMetodoPago(null); setSolicitudEnEspera(false); resetNav('splash')
+  }
+  // La RPC ya eliminó el usuario de Auth: solo se limpia la UI y la navegación.
+  const cuentaEliminada = () => {
+    limpiarUsuario()
     setPerfil(null); setWorker(null); setPedidoRate(null); setPedidoChat(null); setMetodoPago(null); setSolicitudEnEspera(false); resetNav('splash')
   }
   // Al terminar la recuperación, la sesión de Supabase ya es válida: entramos a la app.
@@ -2934,7 +3176,7 @@ export default function App() {
     })()
   }, [live.ultimoCambio, perfil, screen])
 
-  const needsSession = screen !== 'splash' && screen !== 'auth' && screen !== 'reset'
+  const needsSession = screen !== 'splash' && screen !== 'auth' && screen !== 'reset' && screen !== 'legal'
   let current: Screen = needsSession && !perfil ? 'splash' : screen
   // El técnico no ve nunca las pantallas de cliente; y sin aprobación no entra a la conexión.
   if (perfil?.rol === 'tecnico') {
@@ -2947,6 +3189,7 @@ export default function App() {
   if (current === 'splash') content = <SplashScreen openAuth={t => { setAuthTab(t); go('auth') }} />
   else if (current === 'auth') content = <AuthScreen initialTab={authTab} go={go} onAuth={onAuth} />
   else if (current === 'reset') content = <ResetPasswordScreen onDone={finalizarRecuperacion} />
+  else if (current === 'legal') content = <LegalScreen onVolver={() => go(perfil ? 'profile' : 'auth')} />
   else if (!perfil || (needsWorker && !worker) || (current === 'rate' && !pedidoRate) || (current === 'chat' && !pedidoChat)) content = <SplashScreen openAuth={t => { setAuthTab(t); go('auth') }} />
   else {
     switch (current) {
@@ -2959,7 +3202,7 @@ export default function App() {
       case 'pending': content = <PendingScreen perfil={perfil} onRefresh={revisarAprobacion} onLogout={logout} />; break
       case 'rate': content = <RateScreen pedido={pedidoRate!} perfil={perfil} go={go} />; break
       case 'chat': content = <ChatScreen pedido={pedidoChat!} perfil={perfil} go={go} volver={chatOrigen} />; break
-      case 'profile': content = <ProfileScreen perfil={perfil} go={go} onLogout={logout} presencia={presencia} />; break
+      case 'profile': content = <ProfileScreen perfil={perfil} go={go} onLogout={logout} onCuentaEliminada={cuentaEliminada} presencia={presencia} />; break
       case 'help': content = <HelpScreen perfil={perfil} go={go} />; break
       case 'transactions': content = <TransactionsScreen perfil={perfil} go={go} />; break
       case 'notifications': content = <NotificationsScreen perfil={perfil} go={go} />; break

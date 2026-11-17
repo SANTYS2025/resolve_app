@@ -72,11 +72,25 @@ completo se lee en el chat.
 El adaptador está aislado en `src/lib/push.ts`:
 
 - En web devuelve `no_soportado` y la app sigue funcionando.
-- En Android/iOS pide permiso, llama a `register()` y guarda el token con
-  `registrar_dispositivo_push`.
+- En Android/iOS pide permiso, crea el canal `resolve_avisos`, llama a
+  `register()` y guarda el token con `registrar_dispositivo_push`.
 - Al cerrar sesión, `olvidarPush()` desactiva el token de ese teléfono.
+- Si el usuario toca una notificación del sistema, `escucharAperturaPush()`
+  entrega el aviso a `App.tsx`, que abre Solicitudes (o la bandeja si el aviso
+  no está ligado a un servicio). Si la app estaba cerrada, el aviso se guarda
+  como pendiente hasta que React monte la escucha.
+
+El canal se crea con `id: 'resolve_avisos'`. Debe coincidir con el
+`channel_id` que envía `supabase/functions/_shared/fcm.ts`: si no existe,
+Android 8+ descarta la notificación sin mostrarla.
+
+`capacitor.config.ts` declara `PushNotifications.presentationOptions` para que
+la notificación se muestre también con la app abierta. El
+`AndroidManifest.xml` incluye `POST_NOTIFICATIONS` (Android 13+).
 
 ### Instalar el plugin nativo
+
+Ya está en `package.json` (`@capacitor/push-notifications`). Al actualizar:
 
 ```bash
 npm install @capacitor/push-notifications
@@ -87,6 +101,7 @@ Android:
 
 1. Crear el proyecto en Firebase.
 2. Descargar `google-services.json` y copiarlo a `android/app/`.
+   En CI se inyecta desde el secreto `GOOGLE_SERVICES_JSON`.
 3. Añadir el plugin de Google Services en Gradle (lo hace Capacitor al
    sincronizar si el archivo existe).
 4. En Firebase → Cloud Messaging, usar la **cuenta de servicio** para el

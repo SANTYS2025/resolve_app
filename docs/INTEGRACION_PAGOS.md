@@ -15,14 +15,20 @@ pantallas se mantienen.
    (`metodo_pago`, `metodo_pago_en`, `pago_estado`).
 2. Solo los métodos manuales se pueden confirmar:
    `nequi`, `bancolombia`, `daviplata` y `efectivo`.
-3. Cuando el servicio está `completada`, el cliente confirma o cambia el método.
-4. El técnico ve el método y pulsa **“Confirmar pago recibido”**. Eso llama a la
-   RPC `registrar_pago_interno(solicitud_id, metodo)`.
+3. Cuando el técnico marca que llegó (`llego`), ya puede confirmar el pago; el
+   cliente también puede cambiar el método si el servicio terminó sin pago.
+4. El técnico pulsa **“Confirmar pago recibido”** o **“Finalizar solicitud”**.
+   El botón de cierre llama a la RPC atómica
+   `completar_solicitud_con_pago(solicitud_id, metodo)`: registra el pago y
+   cierra en la misma transacción. Si el pago falla, el servicio sigue abierto.
 5. La RPC calcula el monto en el servidor:
    `(precio_final ?? precio_estimado_max ?? precio_estimado_min) * 100 −
    descuento_centavos`, registra la transacción aprobada, la comisión y el neto,
    marca `solicitudes.pago_estado = 'pagado'` y encola notificaciones.
-6. Tarjeta, Google Pay y Bre-B se muestran como **“Pronto”**: no se pueden
+6. `completar_solicitud` (y la vía histórica `cambiar_estado_solicitud`) exige
+   `pago_estado = 'pagado'` y una transacción aprobada: no se puede cerrar el
+   servicio sin pago, aunque se llame la RPC directamente.
+7. Tarjeta, Google Pay y Bre-B se muestran como **“Pronto”**: no se pueden
    seleccionar ni cobrar hasta habilitar pagos reales.
 
 ### Métodos
@@ -49,7 +55,7 @@ pantallas se mantienen.
 | `src/lib/pagosGateway.ts` | Abstracción de pasarela **sin llamadas**: hoy devuelve “diferido”. |
 | `src/lib/transacciones.ts` | Historial, `registrarPagoInterno`, reembolsos vía RPC. |
 | `src/lib/ganancias.ts` | Resúmenes de ingresos/comisiones para el técnico. |
-| `src/App.tsx` (`PagoBox`, `PagoResumenTecnico`) | El cliente guarda el método; el técnico confirma el pago. |
+| `src/App.tsx` (`PagoBox`, `PagoResumenTecnico`, `FinalizarSolicitudBox`) | El cliente guarda el método; el técnico confirma el pago y el cierre lo registra de forma atómica. |
 | `src/features/Extras.tsx` | Historial de transacciones, reembolsos y cupón. |
 
 ### Edge Functions (`supabase/functions/`)
@@ -197,8 +203,13 @@ npm.cmd test
 ## 10. Seguridad
 
 - Ninguna llave `WOMPI_*` vive en el cliente ni en variables `VITE_*`.
-- `registrar_pago_interno` valida sesión, participación, estado `completada` y
-  que el proveedor interno esté activo. El monto lo calcula el servidor.
+- `registrar_pago_interno` valida sesión, participación, método habilitado y que
+  el servicio esté en `llego`, `en_proceso` o `completada`. El monto lo calcula
+  el servidor.
+- `completar_solicitud` exige `pago_estado = 'pagado'` y una transacción
+  aprobada. `completar_solicitud_con_pago` registra el pago y cierra en una sola
+  transacción; `cambiar_estado_solicitud` aplica la misma regla por si se llama
+  la vía histórica.
 - `registrar_evento_wompi` solo es ejecutable por `service_role`.
 - El webhook valida la firma antes de tocar la base.
 - Las tablas de transacciones tienen RLS: cada usuario ve solo lo suyo.

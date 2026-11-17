@@ -17,3 +17,11 @@ backups/
 # del tag correspondiente (ver .github/workflows/android-release.yml).
 *.apk
 apk/
+# Firmas de Android: nunca se suben al repositorio. En CI llegan como secretos.
+*.jks
+*.keystore
+android/keystore.properties
+android/keystore/
+# Carpetas locales del IDE (Android Studio / IntelliJ).
+android/.idea/
+android/local.properties

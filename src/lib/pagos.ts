@@ -184,6 +184,25 @@ export function puedeElegirMetodoPago(estadoSolicitud: string, pagoEstado?: stri
 }
 
 /**
+ * El técnico puede confirmar el pago manual cuando ya está en el domicilio o el
+ * servicio terminó, siempre que el método esté habilitado y no haya pago.
+ *
+ * Coincide con `registrar_pago_interno` (migración 20261114), que acepta
+ * `llego`, `en_proceso` y `completada`. Así el pago puede registrarse antes de
+ * cerrar y el botón "Finalizar" solo tiene que cerrar.
+ */
+export function puedeConfirmarPagoTecnico(
+  estadoSolicitud: string,
+  pagoEstado: string | null | undefined,
+  metodo: string | null | undefined,
+): boolean {
+  return ['llego', 'en_proceso', 'completada'].includes(estadoSolicitud)
+    && pagoEstado !== 'pagado'
+    && pagoEstado !== 'cancelado'
+    && metodoHabilitado(metodo)
+}
+
+/**
  * Valida la selección antes de llamar a la RPC.
  * Devuelve el mensaje de error o `null` si es válida.
  */

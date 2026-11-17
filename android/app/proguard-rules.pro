@@ -1,21 +1,64 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
+# Reglas de R8/ProGuard para Resolve Pasto.
 #
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# La app es un WebView de Capacitor: casi todo el código de negocio vive en JS.
+# Lo que hay que preservar es el puente Java↔JS, los plugins de Capacitor y
+# Firebase Cloud Messaging (push). Los AAR de Capacitor y Firebase traen sus
+# propias reglas de consumidor; estas son el respaldo explícito.
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# ── Atributos necesarios para depurar y para la reflexión de anotaciones ──
+-keepattributes SourceFile,LineNumberTable
+-keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# ── Capacitor: puente JS y plugins ──
+-keep class com.getcapacitor.** { *; }
+-keep @com.getcapacitor.annotation.CapacitorPlugin class * { *; }
+-keep class * extends com.getcapacitor.Plugin { *; }
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+-keepclassmembers class * extends com.getcapacitor.Plugin {
+    @com.getcapacitor.PluginMethod public <methods>;
+}
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# ── Plugins nativos usados por la app ──
+-keep class com.capacitorjs.plugins.** { *; }
+-keep class com.getcapacitor.community.** { *; }
+-keep class io.capawesome.** { *; }
+
+# ── Firebase / FCM ──
+-keep class com.google.firebase.** { *; }
+-keep class com.google.android.gms.** { *; }
+-dontwarn com.google.firebase.**
+-dontwarn com.google.android.gms.**
+
+# ── Cordova (algunos plugins se cargan por nombre) ──
+-keep class org.apache.cordova.** { *; }
+-dontwarn org.apache.cordova.**
+
+# ── WebView y JavaScript ──
+-keepclassmembers class * {
+    public void evaluateJavascript(java.lang.String, android.webkit.ValueCallback);
+}
+
+# ── Serialización / modelos reflejados por nombre ──
+-keepclassmembers enum * {
+    public static **[] values();
+    public static ** valueOf(java.lang.String);
+}
+-keepclassmembers class * implements java.io.Serializable {
+    static final long serialVersionUID;
+    private static final java.io.ObjectStreamField[] serialPersistentFields;
+    !static !transient <fields>;
+    private void writeObject(java.io.ObjectOutputStream);
+    private void readObject(java.io.ObjectInputStream);
+    java.lang.Object writeReplace();
+    java.lang.Object readResolve();
+}
+
+# ── Código de la app ──
+-keep class co.resolve.pasto.** { *; }
+
+# ── Ruido conocido de dependencias (no afecta a la app) ──
+-dontwarn javax.annotation.**
+-dontwarn kotlin.**
+-dontwarn org.jetbrains.annotations.**

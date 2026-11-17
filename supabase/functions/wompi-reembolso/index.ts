@@ -13,6 +13,7 @@
 import { error, json, mensajeError, preflight } from '../_shared/cors.ts'
 import { adminClient, userClient, usuarioDe } from '../_shared/supabase.ts'
 import { leerConfigWompi, reembolsarTransaccion, reembolsosConfigurados } from '../_shared/wompi.ts'
+import { reportarError } from '../_shared/observabilidad.ts'
 
 Deno.serve(async req => {
   const pre = preflight(req)
@@ -82,7 +83,7 @@ Deno.serve(async req => {
           : 'Reembolso total aprobado. La comisión se reversó por completo.',
       })
     } catch (e) {
-      console.error('Wompi rechazó el reembolso:', e)
+      await reportarError(e, { funcion: 'wompi-reembolso', etapa: 'wompi' })
       await admin.rpc('aplicar_reembolso', {
         p_reembolso_id: reembolsoId,
         p_proveedor_id: null,
@@ -91,7 +92,7 @@ Deno.serve(async req => {
       return error(`No se pudo ejecutar el reembolso en Wompi: ${mensajeError(e)}`, 502)
     }
   } catch (e) {
-    console.error(e)
+    await reportarError(e, { funcion: 'wompi-reembolso' })
     return error(mensajeError(e), 500)
   }
 })

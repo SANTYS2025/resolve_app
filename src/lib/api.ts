@@ -84,6 +84,13 @@ export function errMsg(e: unknown): string {
   if (/database error saving new user/i.test(m)) return 'No se pudo crear tu cuenta. Intenta de nuevo en unos minutos.'
   if (/could not find the function|function .* does not exist/i.test(m)) return 'Falta aplicar una actualización de la base de datos. Contacta al administrador.'
   if (/relation .* does not exist|column .* does not exist/i.test(m)) return 'Falta aplicar la migración de chat y pagos en Supabase. Contacta al administrador.'
+  // No mostrar nunca el texto técnico de PostgreSQL al usuario.
+  if (/integer out of range|numeric field overflow|out of range|value too long/i.test(m)) {
+    return 'El monto del pago es demasiado alto para procesarlo. Revisa el precio del servicio e inténtalo de nuevo.'
+  }
+  if (/only secure origins|secure origins/i.test(m)) {
+    return 'La ubicación automática no está disponible aquí. Escribe tu dirección manualmente.'
+  }
   return m || 'Ocurrió un error inesperado.'
 }
 
@@ -570,6 +577,11 @@ export async function marcarLlegada(id: number): Promise<void> {
  *
  * Después del RPC se vuelve a leer el estado para confirmar que el cambio quedó
  * persistido en la base de datos, no solo en la respuesta.
+ *
+ * Desde la migración 20261114 el servidor exige `pago_estado = 'pagado'` y una
+ * transacción aprobada: si el pago aún no está confirmado, usa
+ * `completarSolicitudConPago` para registrar el pago y cerrar en una sola
+ * transacción.
  */
 export async function completarSolicitud(id: number): Promise<void> {
   const { error } = await supabase.rpc('completar_solicitud', { p_id: id })
@@ -580,10 +592,44 @@ export async function completarSolicitud(id: number): Promise<void> {
   }
 }
 
+/**
+ * Cierra el servicio y registra el pago en una sola transacción del servidor.
+ *
+ * ¿Por qué una RPC y no dos llamadas? Porque `completar_solicitud` ahora exige
+ * `pago_estado = 'pagado'`, pero `registrar_pago_interno` necesita que el
+ * servicio siga abierto. La función `completar_solicitud_con_pago` resuelve el
+ * orden en el servidor: si el pago falla, el servicio NO se cierra.
+ */
+export async function completarSolicitudConPago(id: number, metodo: MetodoPago): Promise<void> {
+  try {
+    const { error } = await supabase.rpc('completar_solicitud_con_pago', { p_id: id, p_metodo: metodo })
+    if (error) throw error
+    const estado = await getEstadoSolicitud(id)
+    if (estado !== 'completada') {
+      throw new Error(`La solicitud no quedó terminada (estado actual: ${estado ?? 'desconocido'}).`)
+    }
+  } catch (e) {
+    console.error('completarSolicitudConPago', e)
+    const m = typeof e === 'object' && e !== null && 'message' in e ? String((e as { message: unknown }).message) : String(e ?? '')
+    if (/integer out of range|numeric field overflow|out of range|value too (large|long)/i.test(m)) {
+      throw new Error('No pudimos registrar el pago porque el monto es demasiado alto. Revisa el precio del servicio con el cliente e inténtalo de nuevo.')
+    }
+    throw e
+  }
+}
+
 /** El técnico registra (o corrige) el diagnóstico del daño. El servidor valida que sea SU solicitud aceptada. */
 export async function guardarDiagnostico(solicitudId: number, texto: string): Promise<void> {
   const { error } = await supabase.rpc('guardar_diagnostico', { p_id: solicitudId, p_texto: texto })
-  if (error) throw error
+  if (!error) return
+
+  // Respaldo directo vía RLS en la tabla solicitudes
+  const { error: errDirecto } = await supabase
+    .from('solicitudes')
+    .update({ diagnostico: texto, diagnostico_en: new Date().toISOString() })
+    .eq('id', solicitudId)
+
+  if (errDirecto) throw error
 }
 
 /** Calificación bidireccional: el servidor decide si quien llama es el cliente o el técnico de la solicitud. */

@@ -41,6 +41,9 @@ Ejecutar en este orden (el nombre ya ordena):
 20261111_cola_solicitudes_gps_daviplata.sql
 20261112_cola_lock_tecnico.sql
 20261113_avatares_disponibilidad.sql
+20261114_seguridad_usuarios_rol.sql
+20261114_completar_solicitud_pago_confirmado.sql
+20261114_eliminar_cuenta_y_legales.sql
 ```
 
 Cada archivo es idempotente (`if not exists`, `create or replace`, `drop ...
@@ -113,8 +116,16 @@ npx supabase secrets set \
 `SUPABASE_URL`, `SUPABASE_ANON_KEY` y `SUPABASE_SERVICE_ROLE_KEY` los inyecta
 Supabase automáticamente en las Edge Functions.
 
+Monitoreo de errores (opcional, ver `docs/OBSERVABILIDAD.md`):
+
+```bash
+npx supabase secrets set \
+  SENTRY_DSN=https://<clave>@o<org>.ingest.sentry.io/<proyecto> \
+  SENTRY_ENVIRONMENT=production
+```
+
 > Nunca pongas estas llaves en `.env` con prefijo `VITE_`: quedarían dentro del
-> APK.
+> APK. La única excepción es `VITE_SENTRY_DSN`, que es público por diseño.
 
 ## 5. Realtime
 

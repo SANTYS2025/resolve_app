@@ -29,6 +29,7 @@ import type { IconoMaterialNombre } from '../components/IconoMaterial'
 import { MetodoPagoLogo } from '../components/MetodoPagoLogo'
 import { etiquetaEta, urlUbicacionTecnico } from '../lib/geo'
 import type { Punto } from '../lib/geo'
+import { obtenerUbicacionActual } from '../lib/geolocalizacion'
 import { usePublicarUbicacion, useUbicacionEnVivo } from '../lib/ubicacion'
 import { getPreferencias, guardarPreferencias, marcarNotificacionLeida, marcarTodasLeidas, useNotificacionesEnVivo } from '../lib/notificacionesApi'
 import type { PreferenciasNotificacion } from '../lib/notificaciones'
@@ -969,15 +970,19 @@ function useDestinoCliente() {
   const [destino, setDestino] = useState<Punto | null>(null)
   const [error, setError] = useState('')
   useEffect(() => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      setError('Este dispositivo no permite ubicar tu domicilio para calcular la llegada.')
-      return
-    }
-    navigator.geolocation.getCurrentPosition(
-      p => setDestino({ lat: p.coords.latitude, lng: p.coords.longitude }),
-      () => setError('Activa la ubicación para ver el tiempo estimado de llegada.'),
-      { enableHighAccuracy: true, maximumAge: 60_000, timeout: 15_000 },
-    )
+    let alive = true
+    obtenerUbicacionActual()
+      .then(p => {
+        if (alive) setDestino({ lat: p.latitud, lng: p.longitud })
+      })
+      .catch(err => {
+        if (!alive) return
+        const msg = String(err?.message ?? '')
+        if (!/secure origins|origen seguro/i.test(msg)) {
+          setError(msg || 'Activa la ubicación para ver el tiempo estimado de llegada.')
+        }
+      })
+    return () => { alive = false }
   }, [])
   return { destino, error }
 }
@@ -999,7 +1004,12 @@ function PublicandoUbicacion({ pedido }: { pedido: Pedido }) {
         {publicando ? 'El cliente ve tu recorrido y el tiempo estimado de llegada.' : 'Preparando el envío de tu ubicación…'}
       </p>
       <p className="text-xs mt-1" style={{ color: MU }}>Deja de compartirse al marcar “Llegué” o terminar el servicio.</p>
-      {error && <p className="text-xs mt-2 rounded-xl px-3 py-2" style={{ backgroundColor: '#FEF2F2', color: '#B91C1C' }}>{error}</p>}
+      <p className="text-xs mt-2 rounded-xl px-3 py-2 leading-relaxed font-semibold" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>
+        El envío funciona solo con la app abierta. Si la cierras o el sistema la suspende, el cliente verá “Sin señal” y la última ubicación conocida.
+      </p>
+      {error && !/secure origins|origen seguro/i.test(error) && (
+        <p className="text-xs mt-2 rounded-xl px-3 py-2" style={{ backgroundColor: '#FEF2F2', color: '#B91C1C' }}>{error}</p>
+      )}
     </div>
   )
 }

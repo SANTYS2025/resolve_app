@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {
   METODOS, METODOS_HABILITADOS, METODOS_PAGO, PAGOS_REALES_HABILITADOS, esMetodoPago,
   estadoPagoInicial, etiquetaEstadoPago, metodoDiferido, metodoHabilitado, metodoPagoInfo,
-  puedeElegirMetodoPago, resumenPagoTecnico, validarSeleccionMetodo,
+  puedeConfirmarPagoTecnico, puedeElegirMetodoPago, resumenPagoTecnico, validarSeleccionMetodo,
 } from '../src/lib/pagos.ts'
 
 test('los 8 métodos están visibles, con Daviplata agregado', () => {
@@ -57,6 +57,23 @@ test('solo se elige método con la solicitud completada y sin pagar', () => {
   assert.equal(puedeElegirMetodoPago('completada', 'cancelado'), false)
   assert.equal(puedeElegirMetodoPago('aceptada', 'pendiente'), false)
   assert.equal(puedeElegirMetodoPago('pendiente', 'pendiente'), false)
+})
+
+test('el técnico confirma el pago en el domicilio o al terminar, nunca antes', () => {
+  // En el domicilio o con el servicio terminado: sí.
+  assert.equal(puedeConfirmarPagoTecnico('llego', 'pendiente', 'nequi'), true)
+  assert.equal(puedeConfirmarPagoTecnico('en_proceso', 'pendiente', 'efectivo'), true)
+  assert.equal(puedeConfirmarPagoTecnico('completada', 'pendiente', 'bancolombia'), true)
+  // Antes de llegar: no (el dinero todavía no se entrega).
+  assert.equal(puedeConfirmarPagoTecnico('pendiente', 'pendiente', 'nequi'), false)
+  assert.equal(puedeConfirmarPagoTecnico('aceptada', 'pendiente', 'nequi'), false)
+  assert.equal(puedeConfirmarPagoTecnico('en_camino', 'pendiente', 'nequi'), false)
+  // Pagado o cancelado: no se vuelve a confirmar.
+  assert.equal(puedeConfirmarPagoTecnico('llego', 'pagado', 'nequi'), false)
+  assert.equal(puedeConfirmarPagoTecnico('completada', 'cancelado', 'nequi'), false)
+  // Métodos no habilitados o ausentes: no.
+  assert.equal(puedeConfirmarPagoTecnico('llego', 'pendiente', 'tarjeta_credito'), false)
+  assert.equal(puedeConfirmarPagoTecnico('llego', 'pendiente', null), false)
 })
 
 test('validarSeleccionMetodo devuelve errores claros y bloquea PRONTO', () => {

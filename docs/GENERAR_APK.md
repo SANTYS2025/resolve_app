@@ -7,20 +7,14 @@ Todo lo que necesita (iconos, pantalla de inicio, `capacitor.config.ts`) ya est�
 | Herramienta | Versión | Para qué |
 |---|---|---|
 | Node.js | 20 o superior | compilar la app web |
-| JDK | **21** (Capacitor 8 no compila con 17) | compilar Android |
-| Android Studio | reciente (con Android SDK 34+) | trae Gradle y el emulador |
+| JDK | **21 o superior** (Capacitor 8 no compila con 17) | compilar Android |
+| Android Studio | reciente (con Android SDK 34+) | trae Gradle, el JDK y el emulador |
 
-Variables de entorno de Android Studio/Windows: define `JAVA_HOME` (carpeta del JDK **21**) y `ANDROID_HOME` (carpeta del SDK).
-
-> Si en el computador solo hay JDK 17, instala un JDK 21 y apunta `JAVA_HOME` a él **solo para compilar**.
-> En la compilación de este proyecto se usó un JDK 21 portable en
-> `%TEMP%\opencode\jdk21\jdk-21.0.12.1+1` (fuera del repositorio).
->
-> ```powershell
-> $env:JAVA_HOME = "$env:TEMP\opencode\jdk21\jdk-21.0.12.1+1"
-> $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
-> $env:ANDROID_SDK_ROOT = $env:ANDROID_HOME
-> ```
+El script `npm run apk` busca solo el JDK y el SDK: si `JAVA_HOME` apunta a un
+JDK 17, usa el JDK que viene con Android Studio
+(`C:\Program Files\Android\Android Studio\jbr`) o cualquier JDK 21+ instalado.
+El SDK lo toma de `ANDROID_HOME`, `ANDROID_SDK_ROOT` o
+`%LOCALAPPDATA%\Android\Sdk`. Solo si no encuentra ninguno pide instalarlo.
 
 El archivo **`.env`** (con `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`) debe existir en la raíz del proyecto **cuando compilas**: esos valores quedan incluidos dentro del APK.
 
@@ -38,20 +32,23 @@ npm install
 npm install @capacitor/core @capacitor/android @capacitor/status-bar
 npm install -D @capacitor/cli @capacitor/assets
 
-# Push nativo (opcional pero necesario para notificaciones con la app cerrada)
+# Push nativo (ya está en package.json; se reinstala con npm ci)
 npm install @capacitor/push-notifications
 ```
 
 Para push también debes agregar `android/app/google-services.json` (Firebase)
 y el plugin de Google Services en Gradle. Sin ese archivo, la app funciona y
 muestra que el push no está disponible; las notificaciones quedan en la bandeja
-de Supabase.
+de Supabase. En CI el archivo llega desde el secreto `GOOGLE_SERVICES_JSON`.
 
 ## 2. Compilar la app web
 ```bash
 npm run build
 ```
 Genera la carpeta `dist/`. Si falla, no sigas: el APK usaría una versión vieja o vacía.
+
+> `npm run apk` (sección 6A) ya hace los pasos 2 y 5 por ti. Estos comandos
+> quedan solo para compilar la web o sincronizar Android por separado.
 
 ## 3. Crear el proyecto Android (solo la primera vez)
 ```bash
@@ -81,14 +78,12 @@ El fondo del icono adaptativo queda en `#000032`, el azul del logo (archivo
 ```bash
 npx cap sync android
 ```
+Lo hace `npm run apk` automáticamente antes de compilar el APK.
 
 ## 5B. Base de datos (obligatorio para chat y pagos)
 Antes de usar el APK, aplica las migraciones en **Supabase → SQL Editor**:
 
 ```
-supabase/migrations/20261101_chat_pagos_cuenta_bancaria.sql
-supabase/migrations/20261102_completar_solicitud.sql
-supabase/migrations/20261103_confirmacion_tecnico_estados.sql
 supabase/migrations/20261104_notificaciones_soporte.sql
 supabase/migrations/20261105_pagos_wompi.sql
 supabase/migrations/20261106_gps_eta.sql
@@ -96,22 +91,44 @@ supabase/migrations/20261107_clientes_tecnicos.sql
 supabase/migrations/20261108_crecimiento.sql
 supabase/migrations/20261109_pagos_internos.sql
 supabase/migrations/20261110_archivos_tecnicos.sql
+supabase/migrations/20261111_cola_solicitudes_gps_daviplata.sql
+supabase/migrations/20261112_cola_lock_tecnico.sql
+supabase/migrations/20261113_avatares_disponibilidad.sql
+supabase/migrations/20261114_seguridad_usuarios_rol.sql
+supabase/migrations/20261114_completar_solicitud_pago_confirmado.sql
+supabase/migrations/20261114_eliminar_cuenta_y_legales.sql
 ```
 
-Las tres primeras son la base del chat y del flujo de estados. Las siguientes
-agregan notificaciones/soporte, transacciones y comisiones, GPS/ETA, favoritos y
-herramientas del técnico, cupones/referidos/cobertura, pagos internos y los
-buckets de Storage para portafolio/documentos. Sin ellas, las pantallas nuevas
-muestran error de tabla o RPC faltante.
+Las migraciones crean el chat y el flujo de estados, notificaciones/soporte,
+transacciones y comisiones, GPS/ETA, favoritos y herramientas del técnico,
+cupones/referidos/cobertura, pagos internos, los buckets de Storage, la cola de
+solicitudes, los avatares y la disponibilidad real. Las tres `20261114` añaden
+la protección del rol, el cierre de solicitudes solo con pago confirmado y el
+consentimiento/eliminación de cuenta. Sin ellas, las pantallas nuevas muestran
+error de tabla o RPC faltante.
+
+> El orden importa: aplica los archivos en orden alfabético. Son idempotentes,
+> así que puedes volver a ejecutarlos si algo falla a mitad de camino.
 
 Detalle completo y verificación: `docs/DESPLIEGUE_SUPABASE.md`.
 
-## 6A. APK de PRUEBA (el más rápido)
+## 6A. APK de PRUEBA (una sola ruta)
 ```bash
-cd android
-./gradlew.bat assembleDebug --no-daemon   # en Linux/Mac: ./gradlew assembleDebug
+npm run apk
 ```
-Resultado: `android/app/build/outputs/apk/debug/app-debug.apk`
+Resultado: **`apk/ResolvePasto.apk`** (el único APK del proyecto).
+
+El script `scripts/apk.mjs` hace todo el proceso y borra los APK anteriores,
+incluido el intermedio `android/app/build/outputs/apk/debug/app-debug.apk`:
+
+1. elige un JDK 21+ y el Android SDK,
+2. `npm run build`,
+3. `npx cap sync android`,
+4. `assembleDebug` con Gradle,
+5. copia el resultado a `apk/ResolvePasto.apk`.
+
+Al final imprime la ruta y el tamaño. Si algo falla, se detiene antes de copiar
+(y deja el APK anterior intacto).
 
 El APK **ya no se guarda en Git**. Las versiones publicadas se descargan desde
 los *Releases* de GitHub: <https://github.com/SANTYS2025/resolve_app/releases>.
@@ -120,31 +137,53 @@ empujar un tag `v*` (ver el README, sección *Publicar una versión nueva*).
 
 (Alternativa con interfaz: `npx cap open android` → en Android Studio, menú **Build → Build Bundle(s) / APK(s) → Build APK(s)**.)
 
-## 6B. APK FIRMADO (para repartir a otras personas)
-1. Crea tu llave de firma (**guárdala y no la pierdas**; sin ella no podrás actualizar la app):
+## 6B. AAB y APK FIRMADOS (release)
+
+El build de release usa R8 (`minifyEnabled`) y `shrinkResources`, y **exige** un
+keystore: si faltan las variables, Gradle falla con un mensaje claro.
+
+1. Crea tu llave de firma (**guárdala y no la pierdas**; sin ella no podrás
+   actualizar la app):
    ```bash
    keytool -genkey -v -keystore resolve.keystore -alias resolve -keyalg RSA -keysize 2048 -validity 10000
    ```
-2. En Android Studio: **Build → Generate Signed Bundle / APK → APK**, elige `resolve.keystore`, variante **release**.
-3. Resultado: `android/app/release/app-release.apk`.
+2. Crea `android/keystore.properties` (está en `.gitignore`):
+   ```properties
+   RESOLVE_KEYSTORE_FILE=C:/ruta/absoluta/resolve.keystore
+   RESOLVE_KEYSTORE_PASSWORD=...
+   RESOLVE_KEY_ALIAS=resolve
+   RESOLVE_KEY_PASSWORD=...
+   ```
+   También puedes usar variables de entorno con los mismos nombres.
+3. Compila ambos artefactos:
+   ```bash
+   cd android
+   ./gradlew.bat bundleRelease assembleRelease --no-daemon
+   ```
+4. Resultado:
+   - `android/app/build/outputs/bundle/release/app-release.aab` → Google Play.
+   - `android/app/build/outputs/apk/release/app-release.apk` → reparto directo.
 
-> Google Play no acepta APK: pide **AAB** (en el mismo asistente elige *Android App Bundle*).
-> No subas `resolve.keystore` ni sus contraseñas a Git.
+En GitHub Actions no se usa `keystore.properties`: el workflow decodifica el
+keystore desde `RESOLVE_KEYSTORE_BASE64` y pasa las demás contraseñas como
+secretos. Si falta alguno, el job falla **antes de compilar** indicando cuál.
+
+> Google Play no acepta APK: pide **AAB**.
+> No subas `resolve.keystore`, `*.jks` ni `android/keystore.properties` a Git.
 
 ## 7. Instalarlo en el celular
-- **Por cable:** activa *Opciones de desarrollador → Depuración USB* y ejecuta `adb install -r app-debug.apk`.
-- **Sin cable:** copia el `.apk` al celular (WhatsApp, Drive, USB), ábrelo y permite *Instalar apps de origen desconocido*.
+El archivo a instalar es siempre **`apk/ResolvePasto.apk`**.
+- **Por cable:** activa *Opciones de desarrollador → Depuración USB* y ejecuta `adb install -r apk/ResolvePasto.apk`.
+- **Sin cable:** copia `apk/ResolvePasto.apk` al celular (WhatsApp, Drive, USB), ábrelo y permite *Instalar apps de origen desconocido*.
 
 ## 8. Cada vez que cambies el código
 ```bash
-npm test          # pruebas de chat, métodos de pago y estados de la solicitud
-npm run build
-npx cap sync android
-cd android && ./gradlew.bat assembleDebug --no-daemon
+npm test     # pruebas de chat, métodos de pago y estados de la solicitud
+npm run apk  # compila la web, sincroniza Android y deja apk/ResolvePasto.apk
 ```
 
 Si cambias las imágenes de `assets/`, vuelve a ejecutar
-`powershell -ExecutionPolicy Bypass -File scripts\android-iconos.ps1` antes de `cap sync`.
+`powershell -ExecutionPolicy Bypass -File scripts\android-iconos.ps1` antes de `npm run apk`.
 
 ## Notas para esta app
 - **Internet:** la app necesita conexión (Supabase y tiempo real por WebSocket seguro). Sin internet no carga datos.

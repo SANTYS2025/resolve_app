@@ -14,7 +14,7 @@ import type { MensajeSolicitud, Perfil } from './api'
  * Requiere haber corrido supabase/migrations/20261020_solicitud_eventos.sql (publicación + replica identity).
  */
 
-export type Aviso = { id: number; texto: string; solicitudId: number }
+export type Aviso = { id: number; texto: string; solicitudId: number; requiereAccion?: boolean }
 /** Último cambio de estado visto por Realtime (sirve para disparar la calificación al cliente). */
 export type UltimoCambio = { id: number; estado: string; anterior: string | null; ts: number }
 
@@ -69,12 +69,15 @@ export function useSolicitudesEnVivo(perfil: Perfil | null) {
     }, 800)
   }, [refrescar])
 
-  const notificar = useCallback((texto: string, solicitudId: number) => {
-    setAviso({ id: Date.now(), texto, solicitudId })
+  const notificar = useCallback((texto: string, solicitudId: number, requiereAccion = false) => {
+    setAviso({ id: Date.now(), texto, solicitudId, requiereAccion })
     setPendientes(n => n + 1)
     navigator.vibrate?.(120) // Android; iOS Safari lo ignora
     clearTimeout(timer.current)
-    timer.current = setTimeout(() => setAviso(null), 6000)
+    if (!requiereAccion) {
+      // Autocierre de 3.5 segundos para avisos puramente informativos
+      timer.current = setTimeout(() => setAviso(null), 3500)
+    }
   }, [])
 
   const uid = perfil?.id
@@ -143,24 +146,26 @@ export function useSolicitudesEnVivo(perfil: Perfil | null) {
 
             if (rol === 'tecnico') {
               if (payload.eventType === 'INSERT') {
-                notificar(`Nueva solicitud de ${nueva.nombre_contacto ?? 'un cliente'}.`, nueva.id)
+                notificar(`Nueva solicitud de ${nueva.nombre_contacto ?? 'un cliente'}.`, nueva.id, true)
               } else if (payload.eventType === 'UPDATE' && nueva.estado === 'cancelada' && anterior !== 'cancelada') {
-                notificar('El cliente canceló una solicitud.', nueva.id)
+                notificar('El cliente canceló una solicitud.', nueva.id, false)
               } else if (payload.eventType === 'UPDATE' && nueva.estado === 'confirmada' && anterior !== 'confirmada') {
-                notificar('El cliente confirmó el servicio. Ya puedes ir al domicilio.', nueva.id)
+                notificar('El cliente confirmó el servicio. Ya puedes ir al domicilio.', nueva.id, false)
               } else if (payload.eventType === 'UPDATE' && nueva.estado === 'confirmada_en_espera' && anterior !== 'confirmada_en_espera') {
-                notificar('El cliente confirmó el servicio en espera. Empezará cuando termines el actual.', nueva.id)
+                notificar('El cliente confirmó el servicio en espera. Empezará cuando termines el actual.', nueva.id, false)
               }
             } else if (payload.eventType === 'UPDATE' && anterior !== nueva.estado) {
               const seActivo = (nueva.estado === 'aceptada' || nueva.estado === 'confirmada')
                 && (anterior === 'en_espera' || anterior === 'confirmada_en_espera')
               const texto = seActivo ? TEXTO_ACTIVACION : AVISO_CLIENTE[nueva.estado]
-              if (texto) notificar(texto, nueva.id)
+              // Solo las que requieren decisión inmediata quedan fijas (aceptada, en_espera, completada)
+              const accionInmediata = !seActivo && ['aceptada', 'en_espera', 'completada'].includes(nueva.estado)
+              if (texto) notificar(texto, nueva.id, accionInmediata)
             }
           }
 
           if (rol !== 'tecnico' && payload.eventType === 'UPDATE' && nueva.diagnostico && previa.diagnostico !== nueva.diagnostico) {
-            notificar('El técnico registró el diagnóstico de tu solicitud.', nueva.id)
+            notificar('El técnico registró el diagnóstico de tu solicitud.', nueva.id, false)
           }
         })
         .subscribe(status => {

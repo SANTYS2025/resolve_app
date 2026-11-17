@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react'
 import { supabase } from './supabase'
 import { errMsg, useData } from './api'
 import { etaParaCliente, evaluarSenal, type Eta, type Punto, type Senal } from './geo'
+import { observarUbicacion } from './geolocalizacion'
 
 export type Ubicacion = {
   tecnicoId: number
@@ -140,15 +141,11 @@ export function usePublicarUbicacion(solicitudId: number | null, activo: boolean
 
   useEffect(() => {
     if (!solicitudId || !activo) return
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      setError('Este dispositivo no permite compartir la ubicación.')
-      return
-    }
     let alive = true
     setPublicando(true)
     setError(null)
 
-    const id = navigator.geolocation.watchPosition(
+    const cancelar = observarUbicacion(
       pos => {
         if (!alive) return
         const ahora = Date.now()
@@ -161,13 +158,17 @@ export function usePublicarUbicacion(solicitudId: number | null, activo: boolean
           if (alive) setError(errMsg(e))
         })
       },
-      e => { if (alive) setError(e.message || 'No se pudo obtener tu ubicación.') },
-      { enableHighAccuracy: true, maximumAge: 5_000, timeout: 20_000 },
+      msg => {
+        if (!alive) return
+        // No exponer logs técnicos de origen seguro en la interfaz
+        if (/secure origins|origen seguro/i.test(msg)) return
+        setError(msg)
+      },
     )
 
     return () => {
       alive = false
-      navigator.geolocation.clearWatch(id)
+      cancelar()
       setPublicando(false)
       detenerUbicacion(solicitudId).catch(() => null)
     }

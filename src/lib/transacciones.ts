@@ -138,16 +138,35 @@ export async function getConfigComision(): Promise<{ pctBps: number; minimoCenta
  *
  * El servidor calcula el monto y la comisión; aquí no se envían valores de
  * dinero. Es idempotente: repetir la llamada devuelve la misma transacción.
+ *
+ * Cualquier fallo se normaliza a un mensaje para el usuario: nunca se muestra
+ * el texto técnico de PostgreSQL (p. ej. "integer out of range").
  */
 export async function registrarPagoInterno(solicitudId: number, metodo: string): Promise<Transaccion> {
-  const { data, error } = await supabase.rpc('registrar_pago_interno', {
-    p_solicitud_id: solicitudId,
-    p_metodo: metodo,
-  })
-  if (error) throw error
-  const fila = (Array.isArray(data) ? data[0] : data) as FilaTx | null
-  if (!fila) throw new Error('El servidor no devolvió la transacción.')
-  return mapTx(fila)
+  try {
+    const { data, error } = await supabase.rpc('registrar_pago_interno', {
+      p_solicitud_id: solicitudId,
+      p_metodo: metodo,
+    })
+    if (error) throw error
+    const fila = (Array.isArray(data) ? data[0] : data) as FilaTx | null
+    if (!fila) throw new Error('El servidor no devolvió la transacción.')
+    return mapTx(fila)
+  } catch (e) {
+    console.error('registrar_pago_interno', e)
+    throw new Error(mensajeErrorPago(e))
+  }
+}
+
+/** Mensaje accionable para un fallo al registrar el pago. */
+export function mensajeErrorPago(e: unknown): string {
+  const bruto = typeof e === 'object' && e !== null && 'message' in e
+    ? String((e as { message: unknown }).message)
+    : String(e ?? '')
+  if (/integer out of range|numeric field overflow|out of range|value too large|value too long/i.test(bruto)) {
+    return 'No pudimos registrar el pago porque el monto es demasiado alto. Revisa el precio del servicio con el cliente e inténtalo de nuevo.'
+  }
+  return errMsg(e)
 }
 
 export type ResultadoReembolso = {

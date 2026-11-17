@@ -23,6 +23,9 @@ export function preflight(req: Request): Response | null {
 
 /** Mensaje legible de un error desconocido, sin filtrar secretos. */
 export function mensajeError(e: unknown): string {
-  if (e && typeof e === 'object' && 'message' in e) return String((e as { message: unknown }).message)
-  return String(e ?? 'Error inesperado')
+  const m = e && typeof e === 'object' && 'message' in e ? String((e as { message: unknown }).message) : String(e ?? '')
+  if (/integer out of range|numeric field overflow|out of range|value too (large|long)/i.test(m)) {
+    return 'El monto del pago es demasiado alto para procesarlo. Revisa el precio del servicio e inténtalo de nuevo.'
+  }
+  return m || 'Error inesperado'
 }

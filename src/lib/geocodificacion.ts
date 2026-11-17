@@ -10,6 +10,8 @@
  *    corregirla antes de enviar la solicitud.
  */
 
+import { obtenerUbicacionActual as obtenerUbicacionGeolocalizada } from './geolocalizacion'
+
 export type Coordenadas = { latitud: number; longitud: number; precision?: number | null }
 
 export type DireccionGeocodificada = {
@@ -67,28 +69,9 @@ export function mensajeUbicacion(error: unknown): string {
   return 'No se pudo usar tu ubicación. Escribe la dirección manualmente.'
 }
 
-/** Pide la ubicación al sistema. Debe llamarse únicamente desde un toque del usuario. */
+/** Pide la ubicación al sistema de forma segura (Capacitor nativo o HTTPS web). */
 export function obtenerUbicacionActual(): Promise<Coordenadas> {
-  return new Promise((resolve, reject) => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      reject(new Error(SIN_UBICACION))
-      return
-    }
-    navigator.geolocation.getCurrentPosition(
-      pos => {
-        const latitud = pos.coords.latitude
-        const longitud = pos.coords.longitude
-        if (!Number.isFinite(latitud) || !Number.isFinite(longitud) || latitud < -90 || latitud > 90 || longitud < -180 || longitud > 180) {
-          reject(new Error(SIN_UBICACION))
-          return
-        }
-        const precision = Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : null
-        resolve({ latitud, longitud, precision })
-      },
-      err => reject(new Error(mensajeGeolocalizacion(err))),
-      { enableHighAccuracy: true, timeout: 20_000, maximumAge: 60_000 },
-    )
-  })
+  return obtenerUbicacionGeolocalizada()
 }
 
 /**

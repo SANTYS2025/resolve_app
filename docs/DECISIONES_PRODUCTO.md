@@ -30,7 +30,9 @@ dejarla explícita.
   el servidor. El CHECK conserva los valores históricos para no romper registros.
 - El técnico es quien pulsa “Confirmar pago recibido”; el cliente solo elige y
   guarda el método. Es la opción más simple y coincide con quién recibe el
-  dinero.
+  dinero. El cierre del servicio exige pago confirmado en el servidor: el botón
+  “Finalizar solicitud” usa `completar_solicitud_con_pago`, que registra el pago
+  y cierra en una sola transacción.
 - Referencia interna determinista `resolve-sol-<id>-interno`: repetir la
   confirmación devuelve la misma transacción, sin duplicar comisión ni eventos.
 - El monto **siempre** lo calcula el servidor con el mismo precio base que ve el
@@ -219,8 +221,9 @@ dejarla explícita.
 
 ## UI y arquitectura
 
-- El app real es `src/App.tsx`; los archivos de `screens/` son legados y no se
-  usaron como base.
+- El app real es `src/App.tsx`. Los antiguos `screens/` y `src/App.backup.tsx`
+  se eliminaron: eran copias legadas sin referencias y confundían el punto de
+  entrada.
 - Las pantallas nuevas viven en `src/features/Extras.tsx` y se enrutan desde el
   menú del perfil.
 - Para no reescribir la app, `Extras.tsx` duplica primitivas visuales mínimas
@@ -231,8 +234,10 @@ dejarla explícita.
   - cliente: historial de pagos.
 - `PagoBox` guarda el método manual y ya no redirige a ninguna pasarela.
   `PagoResumenTecnico` muestra el botón “Confirmar pago recibido”, que llama a
-  `registrar_pago_interno`. `procesarCobroAutomatico` queda como abstracción
-  diferida y no se usa en la UI.
+  `registrar_pago_interno`. `FinalizarSolicitudBox` cierra con
+  `completar_solicitud_con_pago` (pago + cierre atómicos); si el pago no se
+  puede registrar, el servicio no se cierra. `procesarCobroAutomatico` queda
+  como abstracción diferida y no se usa en la UI.
 
 ## Operación
 
@@ -240,11 +245,11 @@ dejarla explícita.
   aplicadas en el proyecto Supabase enlazado y registradas en
   `supabase_migrations.schema_migrations`. La migración `20261111` crea la cola,
   el GPS y Daviplata; `20261112` agrega el lock por técnico.
-- La migración `20261113_avatares_disponibilidad.sql` (disponibilidad con
-  presencia, `tecnico_estado`, Realtime de presencia, bucket de avatares y
-  limpieza de URLs de ejemplo) **está pendiente de aplicar**; hasta ejecutarla en
-  el SQL Editor, la app funciona por su respaldo local y la disponibilidad
-  completa no está activa. Es idempotente.
+- Las migraciones `20261113_avatares_disponibilidad.sql`,
+  `20261114_seguridad_usuarios_rol.sql` y
+  `20261114_completar_solicitud_pago_confirmado.sql` **están pendientes de
+  aplicar**; son idempotentes. Hasta ejecutarlas en el SQL Editor, el servidor
+  no aplica las nuevas reglas de columnas protegidas ni el cierre con pago.
 - Antes de modificar la base se guardó un respaldo lógico en
   `backups/20261111_pre_cola_gps/` (33 tablas, 558 filas) con `data/*.json`,
   `schema.sql`, `manifest.json` y su README.

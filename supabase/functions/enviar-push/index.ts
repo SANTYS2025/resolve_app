@@ -17,6 +17,7 @@
 import { error, json, mensajeError, preflight } from '../_shared/cors.ts'
 import { adminClient } from '../_shared/supabase.ts'
 import { enviarFcm, leerCuentaServicio, obtenerAccessToken } from '../_shared/fcm.ts'
+import { reportarError } from '../_shared/observabilidad.ts'
 
 type Notificacion = {
   id: number
@@ -109,7 +110,7 @@ Deno.serve(async req => {
 
     return json({ enviados, sinToken, fallidos, pendientes: pendientes.length })
   } catch (e) {
-    console.error(e)
+    await reportarError(e, { funcion: 'enviar-push' })
     return error(mensajeError(e), 500)
   }
 })

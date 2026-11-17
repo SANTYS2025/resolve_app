@@ -12,6 +12,7 @@ import { error, json, mensajeError, preflight } from '../_shared/cors.ts'
 import { adminClient, userClient, usuarioDe } from '../_shared/supabase.ts'
 import { construirReferencia } from '../_shared/pagos.ts'
 import { checkoutConfigurado, construirUrlCheckout, leerConfigWompi } from '../_shared/wompi.ts'
+import { reportarError } from '../_shared/observabilidad.ts'
 
 type Solicitud = {
   id: number
@@ -94,7 +95,7 @@ Deno.serve(async req => {
 
     return json({ estado: 'iniciado', url, referencia, monto_centavos: monto })
   } catch (e) {
-    console.error(e)
+    await reportarError(e, { funcion: 'wompi-checkout' })
     return error(mensajeError(e), 500)
   }
 })

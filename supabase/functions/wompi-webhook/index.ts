@@ -15,6 +15,7 @@ import { error, json, mensajeError, preflight } from '../_shared/cors.ts'
 import { adminClient } from '../_shared/supabase.ts'
 import { validarFirmaEventoWompi } from '../_shared/pagos.ts'
 import { consultarTransaccion, leerConfigWompi } from '../_shared/wompi.ts'
+import { reportarError } from '../_shared/observabilidad.ts'
 
 type EventoWompi = {
   event?: string
@@ -93,7 +94,7 @@ Deno.serve(async req => {
 
     return json({ ok: true, transaccion: (data as { id?: number } | null)?.id ?? null })
   } catch (e) {
-    console.error(e)
+    await reportarError(e, { funcion: 'wompi-webhook' })
     return error(mensajeError(e), 500)
   }
 })

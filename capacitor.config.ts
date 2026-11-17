@@ -14,6 +14,11 @@ const config: CapacitorConfig = {
   plugins: {
     // Requiere: npm install @capacitor/status-bar  (evita que el contenido quede bajo la barra de estado)
     StatusBar: { overlaysWebView: false, backgroundColor: '#000032', style: 'DARK' },
+    // Requiere: npm install @capacitor/push-notifications y google-services.json en Android.
+    // El canal real se crea en src/lib/push.ts con el id `resolve_avisos`.
+    PushNotifications: {
+      presentationOptions: ['badge', 'sound', 'alert'],
+    },
   },
 }
 
